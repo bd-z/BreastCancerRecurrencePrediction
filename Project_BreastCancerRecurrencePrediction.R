@@ -5,6 +5,7 @@ library(survminer)
 library(glmnet)
 library(randomForestSRC)
 library(pec)
+library(mice)
 options(scipen = 999)
 
 ## load dataset
@@ -109,17 +110,27 @@ clinical_cleaned_2990 <- clean_clinical_data(col_selected_2990, df_clinic_raw = 
 colSums(is.na(clinical_cleaned_2990))
 # since GSE7390 patients didn't receive szstemic therapy and lympha-note negative
 clinical_cleaned_2990_naomt <- clinical_cleaned_2990 %>%
-  na.omit() %>%
-  filter(treatment == "none" & node == "0")
+ # na.omit() %>%
+  filter(treatment == "none" & node == "0") %>%
+  filter(!is.na(node)) %>%
+  select(-treatment)
 
 
 # Box plot of continuos variable
 continuous_variables <- c("size", "age", "t_dmfs")
 generate_box_plots(clinical_cleaned_7390, continuous_variables)
 
+# MICE 7390
 selected_col <- c("grade", "age", "er", "size")
-missed_col <- "grade"
+missed_col <- c("grade")
+colSums(is.na(clinical_cleaned_7390))
 clinical_cleaned_7390_imputed <- impute_missing_value(clinical_cleaned_7390, selected_col, missed_col)
+
+#MICE 2990
+selected_col <- c("grade", "age", "er", "size")
+missed_col <- c("grade", "er")
+clinical_cleaned_2990_imputed <- impute_missing_value(clinical_cleaned_2990_naomt, selected_col, missed_col)
+
 # 
 # selected_col <- c("grade", "age", "er", "size")
 # missed_col <- "er"

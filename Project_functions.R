@@ -111,41 +111,275 @@ generate_box_plots <- function(data, continuous_variables) {
 library(mice)
 # Define the imputation function
 impute_missing_value <- function(clinical_cleaned, selected_col, missed_col) {
+  # Description:
+  # Performs multiple imputation on selected clinical variables using the mice package.
+  # Supports imputing one or more target columns with missing values.
+  #
+  # Input:
+  # - clinical_cleaned: A cleaned clinical data frame
+  # - selected_col: A character vector of columns used in the imputation model
+  # - missed_col: One or more target columns (character vector) to impute
+  #
+  # Output:
+  # - A data frame with the missing values in missed_col imputed using majority vote across multiple imputations.
+  #
+  # Features:
+  # - Automatically assigns imputation methods:
+  #     - "polr" for ordered categorical variables (e.g., grade)
+  #     - "logreg" for binary variables (e.g., er)
+  #     - Defaults to mice's standard method otherwise
+  # - Replaces missing values in the original dataset
+  # - Returns the updated dataset
+  
   
   # Extract relevant variables for imputation
   df_miss <- clinical_cleaned[, selected_col]
   
-  # Show missing data pattern (optional, informative only)
+  # Show missing data pattern
   md.pattern(df_miss)
   
-  # Specify imputation methods
+  # Initialize imputation method for each column
   methods <- make.method(df_miss)
   
-  # Assign appropriate method based on the variable type
-  if (missed_col == "grade") {
-    methods["grade"] <- "polr"  # Ordered categorical: proportional odds logistic regression
-  } else if (missed_col == "er") {
-    methods["er"] <- "logreg"  # Binary categorical: logistic regression
+  # Assign specific imputation methods for each missed_col
+  for (col in missed_col) {
+    if (col == "grade") {
+      methods[col] <- "polr"     # Ordered categorical
+    } else if (col == "er") {
+      methods[col] <- "logreg"   # Binary categorical
+    } else {
+      methods[col] <- ""         # Let mice choose default method
+    }
   }
   
-  # Perform multiple imputation (default m = 5)
-  imp <- mice(df_miss, m = 5, method = methods, seed = 123)
+  # Perform multiple imputation
+  imp <- mice(df_miss, m = 10, method = methods, seed = 123)
   
-  # Define custom mode function
+  # Define custom mode function for majority voting
   Mode <- function(x) {
     ux <- unique(x)
     ux[which.max(tabulate(match(x, ux)))]
   }
   
-  # Use majority vote (mode) across imputations for the target variable
-  filled_values <- apply(imp$imp[[missed_col]], 1, Mode)
-  print(filled_values)
+  # Replace missing values for each target column
+  for (col in missed_col) {
+    if (!is.null(imp$imp[[col]]) && nrow(imp$imp[[col]]) > 0) {
+      filled_values <- apply(imp$imp[[col]], 1, Mode)
+      print(paste("Filling column:", col))
+      print(filled_values)
+      clinical_cleaned[[col]][as.numeric(names(filled_values))] <- filled_values
+    }
+  }
   
-  # Replace missing values in the original dataset
-  clinical_cleaned[[missed_col]][as.numeric(names(filled_values))] <- filled_values
-  # Return updated dataset
   return(clinical_cleaned)
 }
+
+
+align_expr_clin <- function(expr, clin, sample_col = 1) {
+  # Description: This function aligns the columns of a gene expression matrix
+  # and the rows of a clinical data frame based on shared sample names. 
+  # It ensures that the sample order is consistent between the two datasets.
+  s <- as.character(clin[[sample_col]])
+  s <- intersect(s, colnames(expr))
+  list(
+    expr = expr[, s, drop = FALSE],
+    clin = clin[match(s, clin[[sample_col]]), , drop = FALSE]
+  )
+}
+
+
+combat_three_batches <- function(expr_A, clin_A,
+                                 expr_B, clin_B,
+                                 expr_C = NULL, clin_C = NULL,
+                                 predictors = NULL) {
+  # Description: this function performs batch effect correction using ComBat on up to three gene expression datasets
+  # (e.g., training set A, validation set B, and an optional prediction set C), while preserving
+  # important clinical covariates. It ensures that expression and clinical data are aligned by sample
+  # names before applying ComBat.
+  
+  # Inputs:
+  #   - expr_A: expression matrix for batch A (genes x samples)
+  #   - clin_A: clinical data for batch A (must include sample ID in the first column)
+  #   - expr_B: expression matrix for batch B
+  #   - clin_B: clinical data for batch B
+  #   - expr_C (optional): expression matrix for batch C (e.g., new test data)
+  #   - clin_C (optional): clinical data for batch C
+  #   - predictors (optional): character vector of clinical covariate names to preserve during ComBat (e.g., c("age", "grade"))
+  #
+  # Output:
+  #   A list containing corrected expression matrices:
+  #     - $A : ComBat-corrected expression matrix for batch A
+  #     - $B : ComBat-corrected expression matrix for batch B
+  #     - $C : ComBat-corrected expression matrix for batch C (if provided)
+  #
+  # Note:
+  #   - The function ensures expression and clinical data are aligned by sample name before correction.
+  #   - Input expression matrices must have sample names as column names.
+  #   - Clinical data must contain matching sample names in the first column.
+  
+  
+  
+  
+  # Align expression and clinical data for batch A
+  aligned_A <- align_expr_clin(expr_A, clin_A)
+  expr_A_aligned <- aligned_A$expr
+  clin_A_aligned <- aligned_A$clin
+  
+  # Align expression and clinical data for batch B
+  aligned_B <- align_expr_clin(expr_B, clin_B)
+  expr_B_aligned <- aligned_B$expr
+  clin_B_aligned <- aligned_B$clin
+  
+  # Align expression and clinical data for batch C if provided
+  if (!is.null(expr_C)) {
+    aligned_C <- align_expr_clin(expr_C, clin_C)
+    expr_C_aligned <- aligned_C$expr
+    clin_C_aligned <- aligned_C$clin
+  }
+  
+  # Sanity checks: number of samples must match between expr and clin
+  stopifnot(ncol(expr_A_aligned) == nrow(clin_A_aligned))
+  stopifnot(ncol(expr_B_aligned) == nrow(clin_B_aligned))
+  if (!is.null(expr_C)) stopifnot(ncol(expr_C_aligned) == nrow(clin_C_aligned))
+  
+  # Create batch labels
+  n_A <- ncol(expr_A_aligned)
+  n_B <- ncol(expr_B_aligned)
+  batch_A <- rep("A", n_A)
+  batch_B <- rep("B", n_B)
+  
+  if (!is.null(expr_C)) {
+    n_C <- ncol(expr_C_aligned)
+    batch_C <- rep("C", n_C)
+  }
+  
+  # Combine all expression and clinical data
+  expr_all <- cbind(expr_A_aligned, expr_B_aligned, if (!is.null(expr_C)) expr_C_aligned)
+  clin_all <- rbind(clin_A_aligned, clin_B_aligned, if (!is.null(expr_C)) clin_C_aligned)
+  batch_all <- c(batch_A, batch_B, if (!is.null(expr_C)) batch_C)
+  
+  # Ensure sample order matches
+  stopifnot(identical(colnames(expr_all), clin_all$geo_accession))
+  
+  # Build model matrix for covariates to preserve (if provided)
+  if (!is.null(predictors)) {
+    mod <- model.matrix(as.formula(
+      paste("~", paste(predictors, collapse = "+"))
+    ), data = clin_all)
+  } else {
+    mod <- NULL
+  }
+  
+  # Apply ComBat batch correction (no transpose needed if input is genes x samples)
+  expr_corrected <- ComBat(dat = expr_all, batch = batch_all, mod = mod)
+  
+  # Split back to original datasets
+  expr_A_corrected <- expr_corrected[, 1:n_A ]
+  expr_B_corrected <- expr_corrected[,(n_A + 1):(n_A + n_B)]
+  if (!is.null(expr_C)) {
+    expr_C_corrected <- expr_corrected[,(n_A + n_B + 1):(n_A + n_B + n_C)]
+  } else {
+    expr_C_corrected <- NULL
+  }
+  
+  return(list(
+    A = expr_A_corrected,
+    B = expr_B_corrected,
+    C = expr_C_corrected
+  ))
+}
+
+
+
+# 
+# 
+# combat_three_batches <- function(expr_A, clin_A,
+#                                  expr_B, clin_B,
+#                                  expr_C = NULL, clin_C = NULL,
+#                                  predictors = NULL) {
+#   
+#   
+#   aligned_A <- align_expr_clin(expr_A, clin_A)
+#   expr_A_aligned <- aligned_A$expr
+#   clin_A_aligned <- aligned_A$clin
+#   
+#   aligned_B <- align_expr_clin(expr_B, clin_B)
+#   expr_B_aligned <- aligned_B$expr
+#   clin_B_aligned <- aligned_B$clin
+#   
+#   if (!is.null(expr_C)){
+#     aligned_C <- align_expr_clin(expr_C, clin_C)
+#     expr_C_aligned <- aligned_C$expr
+#     clin_C_aligned <- aligned_C$clin
+#   }
+#   
+#   
+#   
+#   stopifnot(ncol(expr_A_aligned) == nrow(clin_A_aligned))
+#   stopifnot(ncol(expr_B_aligned) == nrow(clin_B_aligned))
+#   if (!is.null(expr_C)) stopifnot(ncol(expr_C_aligned) == nrow(clin_C_aligned))
+#   
+#   # 添加 batch 标签
+#   n_A <- ncol(expr_A_aligned)
+#   n_B <- ncol(expr_B_aligned)
+#   batch_A <- rep("A", n_A)
+#   batch_B <- rep("B", n_B)
+#   
+#   if (!is.null(expr_C)) {
+#     n_C <- ncol(expr_C_aligned)
+#     batch_C <- rep("C", n_C)
+#   }
+#   
+#   # 合并表达数据和临床数据
+#   expr_all <- cbind(expr_A_aligned, expr_B_aligned, if (!is.null(expr_C)) expr_C_aligned)
+#   clin_all <- rbind(clin_A_aligned, clin_B_aligned, if (!is.null(expr_C)) clin_C_aligned)
+#   batch_all <- c(batch_A, batch_B, if (!is.null(expr_C)) batch_C)
+#   stopifnot(identical(colnames(expr_all), clin_all$geo_accession))
+#   
+#   
+#   # 提取表达部分（基因列）
+#   # gene_cols <- grep("_at$", colnames(expr_all), value = TRUE)
+#   # expr_mat <- expr_all[, gene_cols]
+#   # rownames(expr_mat) <- rownames(expr_all)
+#   # 
+#   # 构造 mod 矩阵（如有）
+#   if (!is.null(predictors)) {
+#     mod <- model.matrix(as.formula(
+#       paste("~", paste(predictors, collapse = "+"))
+#     ), data = clin_all)
+#   } else {
+#     mod <- NULL
+#   }
+#   
+#   # 转置表达矩阵（基因 × 样本） → ComBat 要求
+#   #expr_mat_t <- t(as.matrix(expr_mat))
+#   
+#   # 执行 ComBat
+#   expr_corrected <- ComBat(dat = expr_all, batch = batch_all, mod = mod)
+#   #expr_corrected <- t(expr_corrected_t)  # 转回样本 × 基因
+#   
+#   # 拆分回 A, B, C
+#   expr_A_corrected <- expr_corrected[, 1:n_A ]
+#   expr_B_corrected <- expr_corrected[,(n_A + 1):(n_A + n_B)]
+#   if (!is.null(expr_C)) {
+#     expr_C_corrected <- expr_corrected[,(n_A + n_B + 1):(n_A + n_B + n_C)]
+#   } else {
+#     expr_C_corrected <- NULL
+#   }
+#   
+#   return(list(
+#     A = expr_A_corrected,
+#     B = expr_B_corrected,
+#     C = expr_C_corrected
+#   ))
+# }
+# 
+
+
+
+
+
+
 
 # Function to build and test a Cox proportional hazards model
 fit_cox_model <- function(predictors, df) {
@@ -197,9 +431,6 @@ plot_km_by_group <- function(df, group_var) {
 
 
 
-library(survival)
-library(randomForestSRC)
-library(riskRegression)
 
 calculate_time_auc_cindex <- function(model_type = c("Cox", "RSF"), fitted_model, df) {
   # This function evaluates the discrimination performance of a fitted survival 
@@ -373,23 +604,23 @@ standardize_with_train <- function(gene_mat_train, gene_mat_valid, significant_g
 
 
 
-compute_risk_score <- function(gene_mat_scaled, significant_vars, clinical_cleaned, n_group = 3) {
+compute_risk_score <- function(gene_mat_scaled, significant_vars_df, clinical_cleaned, n_group = 3) {
   # Computes risk scores based on scaled gene expression and model coefficients,
   # and assigns each sample to a risk group (e.g., low, medium, high) based on quantiles.
   # 
   # Arguments:
   # - gene_mat_scaled: matrix of scaled gene expression values (genes x samples)
-  # - significant_vars: data frame with selected gene names (rownames) and coefficients
+  # - significant_vars_df: data frame with selected gene names (rownames) and coefficients
   # - clinical_cleaned: data frame with clinical data (samples as rows)
   # - n_group: number of risk groups to divide samples into (default = 3)
   #
   # Returns:
-  # - clinical_cleaned with added columns: 'risk_score' and 'risk_group'
+  # - clinical_cleaned with added columns: 'risk_score', 'risk_group' and gene data
   
-  genes <- sub("^ge_", "", rownames(significant_vars))
+  genes <- sub("^ge_", "", rownames(significant_vars_df))
   # Keep only the samples in expr_2990_scaled that exist in clinical_cleaned$geo_accession
   gene_mat_scaled <- gene_mat_scaled[, colnames(gene_mat_scaled) %in% clinical_cleaned$geo_accession]
-  clinical_cleaned$risk_score <- as.vector(t(gene_mat_scaled[genes, ]) %*% significant_vars$coef)
+  clinical_cleaned$risk_score <- as.vector(t(gene_mat_scaled[genes, ]) %*% significant_vars_df$coef)
   
   labels <- paste0("Risk", seq_len(n_group))
   
@@ -397,6 +628,17 @@ compute_risk_score <- function(gene_mat_scaled, significant_vars, clinical_clean
     mutate(risk_group = ntile(risk_score, n_group),
            risk_group = factor(risk_group, labels = labels))
   
-  clinical_cleaned
+  # add gene data
+  gene_mat_scaled_t <- t(gene_mat_scaled)
+  gene_df <- as.data.frame(gene_mat_scaled_t)
+  
+  # Add prefix "ge_" to column names starting with a digit
+  colnames(gene_df)[grepl("^[0-9]", colnames(gene_df))] <- 
+    paste0("ge_", colnames(gene_df)[grepl("^[0-9]", colnames(gene_df))])
+  
+  gene_df$geo_accession <- rownames(gene_df)
+  merged_df <- merge(clinical_cleaned, gene_df, by = "geo_accession", sort = FALSE)
+  merged_df
 }
+
 

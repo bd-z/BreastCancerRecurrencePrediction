@@ -5,7 +5,10 @@ library(survminer)
 library(glmnet)
 library(randomForestSRC)
 library(pec)
+library(riskRegression)
+library(sva)
 options(scipen = 999)
+
 
 ## load dataset
 #gset_7390 <- getGEO("GSE7390", GSEMatrix=TRUE)
@@ -52,6 +55,29 @@ identical(colnames(expr_7390), clinical_cleaned_7390_imputed$geo_accession)
 # stopifnot(ncol(expr_mat) == nrow(clin_matched))
 # 
 
+
+
+corrected <- combat_three_batches(
+  expr_A = expr_7390, clin_A = clinical_cleaned_7390_imputed,
+  expr_B = expr_2990, clin_B = clinical_cleaned_2990_imputed,
+  expr_C = NULL, clin_C = NULL,
+  predictors <- c("grade", "size", "age", "er")
+  #predictors = c("age", "grade", "er")
+)
+
+expr_7390_corrected <- corrected$A
+expr_2990_corrected   <- corrected$B
+expr_test_corrected  <- corrected$C
+
+
+
+
+
+
+
+
+
+
 #2. 构建批量单变量 Cox 回归函数
 #####
 library(survival)
@@ -61,7 +87,7 @@ library(survival)
 
 
 # 构建 Cox 分析函数
-cox_results <- apply(expr_7390, 1, function(gene_expr) {
+cox_results <- apply(expr_7390_corrected, 1, function(gene_expr) {
   df <- data.frame(
     expr = scale(as.numeric(gene_expr)),  # <--- 标准化这一步
     #expr = as.numeric(gene_expr),
@@ -99,7 +125,7 @@ sig_genes <-sig_genes_df$gene
 
 # Step 2: 提取表达数据
 
-expr_top_7390 <- t(expr_7390[sig_genes, ])  # 转置：样本 × 基因
+expr_top_7390 <- t(expr_7390_corrected[sig_genes, ])  # 转置：样本 × 基因
 
 expr_top_7390_scale <- scale(expr_top_7390) # scale() 函数在 R 中默认是对列进行操作的
 
@@ -116,7 +142,7 @@ expr_top_7390_scale <- scale(expr_top_7390) # scale() 函数在 R 中默认是�
 
 
 # 1. 提取表达矩阵 (X) 和生存数据 (y)
-X <- expr_top_7390
+X <- expr_top_7390_scale
 y <- Surv(clinical_cleaned_7390_imputed$t_dmfs, clinical_cleaned_7390_imputed$e_dmfs)
 
 # 2. Lasso Cox 回归 + 10折交叉验证
@@ -174,6 +200,78 @@ selected_df0 <- data.frame(
 )
 selected_df0 <- selected_df0[selected_df0$coef != 0, ]
 
+## 7390data
+significant_gene_7390 <- sub("^ge_", "", rownames(selected_df0))
+
+expr_7390_scaled <- standardize_with_train(gene_mat_train = expr_7390_corrected,
+                                           gene_mat_valid=expr_7390_corrected,
+                                           significant_gene = significant_gene_7390)
+
+clinical_cleaned_risk_7390 <- compute_risk_score(gene_mat_scaled = expr_7390_scaled,
+                                                 significant_vars_df = selected_df0,
+                                                 clinical_cleaned= clinical_cleaned_7390_imputed,
+                                                 n_group = 4)
+
+predictors <- c("grade", "er", "age", "size", "risk_score")
+
+results_7390 <- fit_cox_model(predictors, clinical_cleaned_risk_7390)
+
+predictors <- c("size", "risk_score")
+results_7390_0 <- fit_cox_model(predictors, clinical_cleaned_risk_7390)
+
+predictors <- colnames(clinical_cleaned_risk_7390)[11: length(colnames(clinical_cleaned_risk_7390))]
+results_7390 <- fit_cox_model(predictors, clinical_cleaned_risk_7390)
+fitted_model_7390 = results_7390$model
+calculate_time_auc_cindex(model_type = "Cox",
+                          fitted_model_7390,
+                          df = clinical_cleaned_risk_7390) # not possible because NA in data
+
+
+calculate_time_auc_cindex(model_type = "Cox",
+                          fitted_model_7390,
+                          df = clinical_cleaned_risk_2990) # not possible because NA in data
+
+
+
+
+
+## 2990
+significant_gene_7390 <- sub("^ge_", "", rownames(selected_df0))
+
+expr_2990_scaled <- standardize_with_train(gene_mat_train = expr_7390_corrected,
+                                           gene_mat_valid=expr_2990_corrected,
+                                           significant_gene = significant_gene_7390)
+
+clinical_cleaned_risk_2990 <- compute_risk_score(gene_mat_scaled = expr_2990_scaled,
+                                                 significant_vars = selected_df0,
+                                                 clinical_cleaned= clinical_cleaned_2990_imputed,
+                                                 n_group = 4)
+
+#predictors <- c("grade", "er", "age", "size", "risk_score")
+predictors <- colnames(clinical_cleaned_risk_2990)[11: length(colnames(clinical_cleaned_risk_2990))]
+results_2990 <- fit_cox_model(predictors, clinical_cleaned_risk_2990)
+
+plot_km_by_group(clinical_cleaned_risk_2990, "risk_group")
+fitted_model_2990 = results_2990$model
+calculate_time_auc_cindex(model_type = "Cox",
+                          fitted_model_2990,
+                          df = clinical_cleaned_risk_2990) # not possible because NA in data
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -218,8 +316,8 @@ significant_vars[, c("coef", "Pr(>|z|)")]
 # clinical_cleaned_7390_imputed$risk_score <- risk_score
 
 
-# expr_7390_scaled_test <- standardize_with_train(gene_mat_train = expr_7390,
-#                                            gene_mat_valid = expr_7390,
+# expr_7390_scaled_test <- standardize_with_train(gene_mat_train = expr_7390_corrected,
+#                                            gene_mat_valid = expr_7390_corrected,
 #                                            significant_gene
 # )
 # 
@@ -256,8 +354,8 @@ significant_gene <- rownames(significant_vars)
 
 
 
-expr_2990_scaled <- standardize_with_train(gene_mat_train = expr_7390,
-                                           gene_mat_valid=expr_2990,
+expr_2990_scaled <- standardize_with_train(gene_mat_train = expr_7390_corrected,
+                                           gene_mat_valid=expr_2990_corrected,
                                            significant_gene
                                            )
 
