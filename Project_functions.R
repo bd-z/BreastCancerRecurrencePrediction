@@ -383,30 +383,71 @@ combat_three_batches <- function(expr_A, clin_A,
 
 # Function to build and test a Cox proportional hazards model
 fit_cox_model <- function(predictors, df) {
-  
-  # Construct formula dynamically: Surv(...) ~ predictor1 + predictor2 + ...
+  # Build formula: Surv(...) ~ var1 + var2 + ...
   formula <- as.formula(paste(
     "Surv(t_dmfs, e_dmfs) ~",
     paste(predictors, collapse = " + ")
   ))
   
-  # Fit the Cox proportional hazards model
+  # Fit Cox proportional hazards model
   cox_model <- coxph(formula, data = df, x = TRUE, y = TRUE)
   
   # Print model summary
-  print("cox model summary")
-  print(summary(cox_model))
+  cat("Cox model summary:\n")
+  model_summary <- summary(cox_model)
+  print(model_summary)
   
-  # Test proportional hazards assumption
+  # Extract coefficients, z-score, and p-value
+  coef_df <- data.frame(
+    variable = rownames(model_summary$coefficients),
+    coef = model_summary$coefficients[, "coef"],
+    zscore = model_summary$coefficients[, "z"],
+    pvalue = model_summary$coefficients[, "Pr(>|z|)"]
+  )
+  
+  # Proportional hazards assumption test
   test_ph <- cox.zph(cox_model)
-  print(ggcoxzph(test_ph))
-  
   print("Test proportional hazards assumption:")
   print(test_ph)
   
-  # Return model and PH test result
-  return(list(model = cox_model, ph_test = test_ph))
+  # Plot Schoenfeld residuals test
+  print(ggcoxzph(test_ph))
+  
+  # Return everything
+  return(list(
+    model = cox_model,
+    ph_test = test_ph,
+    coef_table = coef_df
+  ))
 }
+
+# fit_cox_model <- function(predictors, df) {
+#   
+#   # Construct formula dynamically: Surv(...) ~ predictor1 + predictor2 + ...
+#   formula <- as.formula(paste(
+#     "Surv(t_dmfs, e_dmfs) ~",
+#     paste(predictors, collapse = " + ")
+#   ))
+#   
+#   # Fit the Cox proportional hazards model
+#   cox_model <- coxph(formula, data = df, x = TRUE, y = TRUE)
+#   
+#   # Print model summary
+#   print("cox model summary")
+#   print(summary(cox_model))
+#   
+#   # Test proportional hazards assumption
+#   test_ph <- cox.zph(cox_model)
+#   print(ggcoxzph(test_ph))
+#   
+#   print("Test proportional hazards assumption:")
+#   print(test_ph)
+#   
+#   # Return model and PH test result
+#   return(list(model = cox_model,
+#               ph_test = test_ph,
+#               model_summary = summary(cox_model)))
+# }
 
 # Function to plot Kaplan-Meier survival curve by a target grouping variable
 plot_km_by_group <- function(df, group_var) {
@@ -617,10 +658,19 @@ compute_risk_score <- function(gene_mat_scaled, significant_vars_df, clinical_cl
   # Returns:
   # - clinical_cleaned with added columns: 'risk_score', 'risk_group' and gene data
   
+  # if risk_score/risk_group column already exists, rename it.
+  names(clinical_cleaned)[names(clinical_cleaned) == "risk_score"] <- "lasso_risk_score"
+  names(clinical_cleaned)[names(clinical_cleaned) == "risk_group"] <- "lasso_risk_group"
+  
   genes <- sub("^ge_", "", rownames(significant_vars_df))
   # Keep only the samples in expr_2990_scaled that exist in clinical_cleaned$geo_accession
-  gene_mat_scaled <- gene_mat_scaled[, colnames(gene_mat_scaled) %in% clinical_cleaned$geo_accession]
-  clinical_cleaned$risk_score <- as.vector(t(gene_mat_scaled[genes, ]) %*% significant_vars_df$coef)
+  gene_mat_scaled <- gene_mat_scaled[, match(clinical_cleaned$geo_accession, colnames(gene_mat_scaled))]
+  gene_mat_scaled <- gene_mat_scaled[genes, ]
+  
+  if (!identical(rownames(gene_mat_scaled), rownames(significant_vars_df)))
+    stop("Row names are not identical or not in the same order.")
+  
+  clinical_cleaned$risk_score <- as.vector(t(gene_mat_scaled) %*% significant_vars_df$coef)
   
   labels <- paste0("Risk", seq_len(n_group))
   
@@ -642,3 +692,205 @@ compute_risk_score <- function(gene_mat_scaled, significant_vars_df, clinical_cl
 }
 
 
+split_expr_clinical <- function(expr_mat, clinical_df, 
+                                stratify_col = "e_dmfs", train_frac = 0.7, seed = 123) {
+  # Desprition: 该方程会自动将基因样本与医院样本对齐
+  
+  # Set random seed for reproducibility
+  set.seed(seed)
+  
+  # Stratified sampling based on the specified column (e.g., event indicator)
+  train_index <- createDataPartition(clinical_df[[stratify_col]], p = train_frac, list = FALSE)
+  
+  # Split clinical data into training and testing sets
+  train_clinical <- clinical_df[train_index, ]
+  test_clinical  <- clinical_df[-train_index, ]
+  
+  # Get sample IDs (assumes geo_accession is the sample identifier)
+  train_samples <- train_clinical$geo_accession
+  test_samples  <- test_clinical$geo_accession
+  
+  # Subset expression matrix by sample IDs
+  train_expr <- expr_mat[, train_samples]
+  test_expr  <- expr_mat[, test_samples]
+  
+  # Return a named list containing all splits
+  return(list(
+    train_expr = train_expr,
+    test_expr = test_expr,
+    train_clinical = train_clinical,
+    test_clinical = test_clinical
+  ))
+}
+
+
+
+
+batch_univariate_cox_regression <- function(train_expr, train_clinical) {
+  # Description: Performs univariate Cox regression for each gene in the expression matrix
+  # to evaluate associations with survival outcomes (DMFS time and status).
+  # Input: train_expr (gene expression matrix), train_clinical (clinical data with t_dmfs and e_dmfs)
+  # Output: sig_genes_df (data frame of significant genes with p < 0.05)
+  
+  
+  # Perform Cox regression for each gene
+  cox_results <- apply(train_expr, 1, function(gene_expr) {
+    df <- data.frame(
+      expr = gene_expr,                    # Gene expression
+      time = train_clinical$t_dmfs,        # Survival time
+      status = train_clinical$e_dmfs       # Event status (1=event, 0=censored)
+    )
+    
+    fit <- tryCatch(
+      coxph(Surv(time, status) ~ expr, data = df),  # Cox model
+      error = function(e) return(NULL)              # Return NULL if fails
+    )
+    
+    if (is.null(fit)) return(c(NA, NA, NA, NA))
+    
+    s <- summary(fit)
+    c(coef = s$coefficients[1, "coef"],          # Log hazard ratio
+      HR = s$coefficients[1, "exp(coef)"],       # Hazard ratio
+      SE = s$coefficients[1, "se(coef)"],        # Standard error
+      p.value = s$coefficients[1, "Pr(>|z|)"])   # P-value
+  })
+  
+  # Organize results into data frame
+  cox_df <- as.data.frame(t(cox_results))
+  cox_df$gene <- rownames(cox_df)          # Add gene names
+  cox_df <- cox_df[order(cox_df$p.value), ]  # Sort by p-value
+  
+  # Filter significant genes (p < 0.05)
+  sig_genes_df <- subset(cox_df, p.value < 0.05)
+  
+  return(sig_genes_df)
+}
+
+# Example usage:
+# sig_genes_df <- batch_univariate_cox_regression(train_expr, train_clinical)
+
+lasso_cox_cv <- function(train_expr, train_clinical, sig_gene_df) {
+  # Lasso Cox Regression with Cross-Validation
+  # Description: Runs Lasso Cox with 10-fold CV to select significant genes.
+  # Input: train_expr, train_clinical, sig_gene_df
+  # Output: selected_gene_df
+  
+  sig_genes <- sig_gene_df$gene
+  expr_transposed <- t(train_expr[sig_genes, ])
+  X <- expr_transposed
+  y <- Surv(train_clinical$t_dmfs, train_clinical$e_dmfs)
+  
+  set.seed(123)
+  cvfit <- cv.glmnet(X, y, family = "cox", alpha = 1, nfolds = 10)
+  
+  plot(cvfit)
+  abline(v = log(cvfit$lambda.min), col = "red", lty = 2)   
+  abline(v = log(cvfit$lambda.1se), col = "blue", lty = 2)  
+  
+  coef_opt <- coef(cvfit, s = "lambda.min")
+  selected_genes <- as.matrix(coef_opt)
+  selected_gene_df <- data.frame(gene = rownames(selected_genes), coef = selected_genes[, 1])
+  selected_gene_df <- selected_gene_df[selected_gene_df$coef != 0, ]
+  
+  return(selected_gene_df)
+}
+
+# Example: selected_gene_df <- lasso_cox_cv(train_expr, train_clinical, sig_gene_df)
+
+
+
+cox_rsf_workflow <- function(gene_expr,
+                         clinical_data_imputed,
+                         train_frac,
+                         seed,
+                         clin_pred = TRUE,
+                         riskscore_pred = FALSE,
+                         gene_pred = TRUE,
+                         clin_predictors = c("grade", "er", "age", "size")
+                         ) {
+  # Cox Workflow Function
+  # Description: Executes a full Cox model workflow including data splitting, gene selection, risk scoring, and model evaluation.
+  # Input: gene_expr (expression matrix), clinical_data_imputed (imputed clinical data), train_frac (training fraction), seed (random seed)
+  # Output: results_train (Cox model results), result_valid (validation metrics)
+  
+  
+  # Split data into train and test sets
+  result <- split_expr_clinical(gene_expr, clinical_data_imputed, stratify_col = "e_dmfs", train_frac = train_frac, seed = seed)
+  train_expr <- result$train_expr
+  train_clinical <- result$train_clinical
+  test_expr <- result$test_expr
+  test_clinical <- result$test_clinical
+  
+  # Perform batch univariate Cox regression
+  sig_gene_df <- batch_univariate_cox_regression(train_expr, train_clinical)
+  
+  # Apply Lasso Cox with cross-validation
+  selected_gene_df <- lasso_cox_cv(train_expr, train_clinical, sig_gene_df)
+  
+  if (nrow(selected_gene_df) == 0) {
+    message("No genes selected, skipping this run.")
+    return(NULL)
+  } else {
+  
+  # Compute risk scores for training data
+  clinical_cleaned_risk_train <- compute_risk_score(gene_mat_scaled = train_expr,
+                                                    significant_vars_df = selected_gene_df,
+                                                    clinical_cleaned = train_clinical,
+                                                    n_group = 3)
+  
+  # Define predictors
+  clin_predictors <- if (clin_pred) clin_predictors else NULL
+  
+  # find the position of "risk_group" column
+  risk_group_pos <- which(colnames(clinical_cleaned_risk_train) == "risk_group")
+  gene_predictors <- if (gene_pred)colnames(clinical_cleaned_risk_train)[(risk_group_pos + 1):
+                                            length(colnames(clinical_cleaned_risk_train))] else NULL
+  
+  risk_score_predictor <- if (riskscore_pred) "risk_score" else NULL
+
+  predictors <- c(clin_predictors, risk_score_predictor, gene_predictors)
+  
+  # Fit Cox model on training data
+  results_train <- fit_cox_model(predictors, clinical_cleaned_risk_train)
+  
+  # Compute risk scores for test data
+  clinical_cleaned_risk_test <- compute_risk_score(gene_mat_scaled = test_expr,
+                                                   significant_vars_df = selected_gene_df,
+                                                   clinical_cleaned = test_clinical,
+                                                   n_group = 3)
+  
+  # Calculate validation metrics
+  result_valid <- calculate_time_auc_cindex("Cox", fitted_model = results_train$model, df = clinical_cleaned_risk_test)
+  
+  # random forest
+  clinical_rsf <- clinical_cleaned_risk_train[, c("t_dmfs", "e_dmfs", predictors)]
+  
+  # build RSF model
+  result_rsf_train <- rsf_kfold_cv_best(clinical_rsf, K = 5)
+  # Best model
+  rsf_fit_best <- result_rsf_train$best_model
+  
+  #Remove variables with negative/less importance from the predictors vector based on RSF model output
+  imp <- result_rsf_train$importance
+  vars_to_remove <- names(imp)[imp < 0.01]
+  predictors_filtered_rsf <- setdiff(predictors, vars_to_remove)
+  
+  clinical_rsf <- clinical_cleaned_risk_train[, c("t_dmfs", "e_dmfs", predictors_filtered_rsf)]
+  # build RSF model with predictors_filtered_rsf
+  result_rsf_train <- rsf_kfold_cv_best(clinical_rsf, K = 5)
+  # Best model
+  rsf_fit_best <- result_rsf_train$best_model
+  
+  result_rsf_valid <- calculate_time_auc_cindex("RSF", fitted_model = rsf_fit_best, df = clinical_cleaned_risk_test)
+  
+  return(list(results_train = results_train,
+              result_valid = result_valid,
+              result_rsf_train = result_rsf_train,
+              result_rsf_valid = result_rsf_valid,
+              predictors_filtered_rsf
+              ))
+  }
+}
+
+# Example usage:
+# result <- cox_workflow(gene_expr, clinical_data_imputed, train_frac = 0.7, seed = 345)

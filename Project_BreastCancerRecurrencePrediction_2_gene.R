@@ -75,132 +75,142 @@ expr_test_corrected  <- corrected$C
 
 
 
-
-
-
-#2. 构建批量单变量 Cox 回归函数
-#####
-library(survival)
-
-#keep <- rowSums(expr_mat != 0) >= 10  # 至少10个样本表达不为0
-#expr_mat_filtered <- expr_mat[keep, ]
-
-
-# 构建 Cox 分析函数
-cox_results <- apply(expr_7390_corrected, 1, function(gene_expr) {
-  df <- data.frame(
-    expr = scale(as.numeric(gene_expr)),  # <--- 标准化这一步
-    #expr = as.numeric(gene_expr),
-    time = clinical_cleaned_7390_imputed$t_dmfs,
-    status = clinical_cleaned_7390_imputed$e_dmfs
-  )
-  
-  fit <- tryCatch(
-    coxph(Surv(time, status) ~ expr, data = df),
-    error = function(e) return(NULL)
-  )
-  
-  if (is.null(fit)) return(c(NA, NA, NA, NA))
-  
-  s <- summary(fit)
-  coef <- s$coefficients[1, "coef"]
-  hr <- s$coefficients[1, "exp(coef)"]
-  p <- s$coefficients[1, "Pr(>|z|)"]
-  se <- s$coefficients[1, "se(coef)"]
-  c(coef = coef, HR = hr, SE = se, p.value = p)
-})
-
-"218727_at"
-
-#3. 整理结果表格并筛选显著基因
-cox_df <- as.data.frame(t(cox_results))
-cox_df$gene <- rownames(cox_df)
-
-# 按 p 值排序
-cox_df <- cox_df[order(cox_df$p.value), ]
-
-# 筛选显著基因（比如 p < 0.05）
-sig_genes_df <- subset(cox_df, p.value < 0.11)
-sig_genes <-sig_genes_df$gene
-
-# Step 2: 提取表达数据
-
-expr_top_7390 <- t(expr_7390_corrected[sig_genes, ])  # 转置：样本 × 基因
-
-expr_top_7390_scale <- scale(expr_top_7390) # scale() 函数在 R 中默认是对列进行操作的
-
-
 # 
-# # 将矩阵转为 data.frame，同时添加新的列
-# expr_top_7390_with_survival <- data.frame(
-#   time = clinical_cleaned_7390_imputed$t_dmfs,
-#   status = clinical_cleaned_7390_imputed$e_dmfs,
-#   expr_top_7390_scale
+# 
+# 
+# #2. 构建批量单变量 Cox 回归函数
+# #####
+# library(survival)
+# 
+# #keep <- rowSums(expr_mat != 0) >= 10  # 至少10个样本表达不为0
+# #expr_mat_filtered <- expr_mat[keep, ]
+# 
+# 
+# # 构建 Cox 分析函数
+# cox_results <- apply(expr_7390_corrected, 1, function(gene_expr) {
+#   df <- data.frame(
+#     expr = scale(as.numeric(gene_expr)),  # <--- 标准化这一步
+#     #expr = as.numeric(gene_expr),
+#     time = clinical_cleaned_7390_imputed$t_dmfs,
+#     status = clinical_cleaned_7390_imputed$e_dmfs
+#   )
+#   
+#   fit <- tryCatch(
+#     coxph(Surv(time, status) ~ expr, data = df),
+#     error = function(e) return(NULL)
+#   )
+#   
+#   if (is.null(fit)) return(c(NA, NA, NA, NA))
+#   
+#   s <- summary(fit)
+#   coef <- s$coefficients[1, "coef"]
+#   hr <- s$coefficients[1, "exp(coef)"]
+#   p <- s$coefficients[1, "Pr(>|z|)"]
+#   se <- s$coefficients[1, "se(coef)"]
+#   c(coef = coef, HR = hr, SE = se, p.value = p)
+# })
+# 
+# "218727_at"
+# 
+# #3. 整理结果表格并筛选显著基因
+# cox_df <- as.data.frame(t(cox_results))
+# cox_df$gene <- rownames(cox_df)
+# 
+# # 按 p 值排序
+# cox_df <- cox_df[order(cox_df$p.value), ]
+# 
+# # 筛选显著基因（比如 p < 0.05）
+# sig_genes_df <- subset(cox_df, p.value < 0.11)
+# sig_genes <-sig_genes_df$gene
+# 
+# 
+
+
+sig_genes_df <- batch_univariate_cox_regression(train_expr, train_clinical)
+
+
+selected_gene_df <- lasso_cox_cv(expr_matrix, clinical_data, sig_gene_df)
+# # Step 2: 提取表达数据
+# 
+# #expr_top_7390 <- t(expr_7390_corrected[sig_genes, ])  # 转置：样本 × 基因
+# 
+# #expr_top_7390_scale <- scale(expr_top_7390) # scale() 函数在 R 中默认是对列进行操作的
+# 
+# 
+# # 
+# # # 将矩阵转为 data.frame，同时添加新的列
+# # expr_top_7390_with_survival <- data.frame(
+# #   time = clinical_cleaned_7390_imputed$t_dmfs,
+# #   status = clinical_cleaned_7390_imputed$e_dmfs,
+# #   expr_top_7390_scale
+# # )
+# 
+# 
+# 
+# 
+# # 1. 提取表达矩阵 (X) 和生存数据 (y)
+# X <- expr_top_7390_scale
+# y <- Surv(clinical_cleaned_7390_imputed$t_dmfs, clinical_cleaned_7390_imputed$e_dmfs)
+# 
+# # 2. Lasso Cox 回归 + 10折交叉验证
+# set.seed(123)
+# cvfit <- cv.glmnet(X, y, family = "cox", alpha = 1, nfolds = 10)
+# 
+# # 3. 查看最佳 lambda 值
+# # best_lambda <- cvfit$lambda.min
+# # cat("Best lambda:", best_lambda, "\n")
+# # best_lambda1se <- cvfit$lambda.1se
+# # plot(cvfit)
+# # 
+# # 
+# # 
+# # # 4. 提取非零系数的基因（Lasso选中的）
+# #coef_min <- coef(cvfit, s = "lambda.min")
+# #selected_genes <- rownames(coef_min)[which(coef_min != 0)]
+# 
+# # cat("Selected genes:\n")
+# # print(selected_genes)
+# 
+# 
+# # 可视化每个 lambda 的表现
+# plot(cvfit)
+# abline(v = log(cvfit$lambda.min), col = "red", lty = 2)   # 最小误差对应的 lambda
+# abline(v = log(cvfit$lambda.1se), col = "blue", lty = 2)  # 1-SE rule 对应的 lambda
+# 
+# # 查看所有 lambda 值和交叉验证误差
+# # cv_table <- data.frame(
+# #   lambda = cvfit$lambda,
+# #   cvm = cvfit$cvm,              # mean cross-validated deviance
+# #   cvsd = cvfit$cvsd,            # standard deviation
+# #   nzero = cvfit$nzero           # 每个lambda下的非零系数数
+# # )
+# 
+# #print(head(cv_table))
+# 
+# #cvfit$lambda.min
+# #[1] 0.09631261
+# #[1] 0.105703
+# #0.002
+# # 最佳 lambda 对应的非零系数
+# #best_coef <- coef(cvfit, s = "lambda.min")
+# 
+# 
+# coef_min <- coef(cvfit, s = "lambda.min")
+# 
+# # 把稀疏矩阵转成普通 matrix，然后筛选非零
+# selected_genes <- as.matrix(coef_min)
+# 
+# # 只保留非零系数的基因
+# selected_df0 <- data.frame(
+#   gene = rownames(selected_genes),
+#   coef = selected_genes[, 1]
 # )
-
-
-
-
-# 1. 提取表达矩阵 (X) 和生存数据 (y)
-X <- expr_top_7390_scale
-y <- Surv(clinical_cleaned_7390_imputed$t_dmfs, clinical_cleaned_7390_imputed$e_dmfs)
-
-# 2. Lasso Cox 回归 + 10折交叉验证
-set.seed(123)
-cvfit <- cv.glmnet(X, y, family = "cox", alpha = 1, nfolds = 10)
-
-# 3. 查看最佳 lambda 值
-best_lambda <- cvfit$lambda.min
-cat("Best lambda:", best_lambda, "\n")
-best_lambda1se <- cvfit$lambda.1se
-plot(cvfit)
-
-
-
-# 4. 提取非零系数的基因（Lasso选中的）
-coef_min <- coef(cvfit, s = "lambda.min")
-selected_genes <- rownames(coef_min)[which(coef_min != 0)]
-
-cat("Selected genes:\n")
-print(selected_genes)
-
-
-# 可视化每个 lambda 的表现
-plot(cvfit)
-abline(v = log(cvfit$lambda.min), col = "red", lty = 2)   # 最小误差对应的 lambda
-abline(v = log(cvfit$lambda.1se), col = "blue", lty = 2)  # 1-SE rule 对应的 lambda
-
-# 查看所有 lambda 值和交叉验证误差
-# cv_table <- data.frame(
-#   lambda = cvfit$lambda,
-#   cvm = cvfit$cvm,              # mean cross-validated deviance
-#   cvsd = cvfit$cvsd,            # standard deviation
-#   nzero = cvfit$nzero           # 每个lambda下的非零系数数
-# )
-
-print(head(cv_table))
-
-cvfit$lambda.min
-#[1] 0.09631261
-#[1] 0.105703
-#0.002
-# 最佳 lambda 对应的非零系数
-best_coef <- coef(cvfit, s = "lambda.min")
-
-
-coef_min <- coef(cvfit, s = "lambda.min")
-
-# 把稀疏矩阵转成普通 matrix，然后筛选非零
-selected_genes <- as.matrix(coef_min)
-
-# 只保留非零系数的基因
-selected_df0 <- data.frame(
-  gene = rownames(selected_genes),
-  coef = selected_genes[, 1]
-)
-selected_df0 <- selected_df0[selected_df0$coef != 0, ]
+# selected_df0 <- selected_df0[selected_df0$coef != 0, ]
+# 
 
 ## 7390data
+
+selected_df0 <- selected_gene_df
 significant_gene_7390 <- sub("^ge_", "", rownames(selected_df0))
 
 expr_7390_scaled <- standardize_with_train(gene_mat_train = expr_7390_corrected,
@@ -221,7 +231,32 @@ results_7390_0 <- fit_cox_model(predictors, clinical_cleaned_risk_7390)
 
 predictors <- colnames(clinical_cleaned_risk_7390)[11: length(colnames(clinical_cleaned_risk_7390))]
 results_7390 <- fit_cox_model(predictors, clinical_cleaned_risk_7390)
-fitted_model_7390 = results_7390$model
+fitted_model_7390 <- results_7390$model
+results_7390_coef_df <- results_7390$coef_table
+
+clinical_cleaned_risk_7390 <- compute_risk_score(gene_mat_scaled = expr_7390_scaled,
+                                                 significant_vars_df = results_7390_coef_df,
+                                                 clinical_cleaned= clinical_cleaned_7390_imputed,
+                                                 n_group = 4)
+
+
+predictors <- c("grade", "er", "age", "size", "risk_score")
+
+results_7390_cl_risk <- fit_cox_model(predictors, clinical_cleaned_risk_7390)
+
+
+
+
+
+
+# just for test purpos
+# test= clinical_cleaned_risk_7390[11: length(colnames(clinical_cleaned_risk_7390))]
+# risk_scores <- predict(fitted_model_7390, newdata = test , type = "lp")
+
+
+
+
+
 calculate_time_auc_cindex(model_type = "Cox",
                           fitted_model_7390,
                           df = clinical_cleaned_risk_7390) # not possible because NA in data
@@ -236,14 +271,14 @@ calculate_time_auc_cindex(model_type = "Cox",
 
 
 ## 2990
-significant_gene_7390 <- sub("^ge_", "", rownames(selected_df0))
+significant_gene_7390 <- sub("^ge_", "", rownames(results_7390_coef_df)) # selected_df0
 
 expr_2990_scaled <- standardize_with_train(gene_mat_train = expr_7390_corrected,
                                            gene_mat_valid=expr_2990_corrected,
                                            significant_gene = significant_gene_7390)
 
 clinical_cleaned_risk_2990 <- compute_risk_score(gene_mat_scaled = expr_2990_scaled,
-                                                 significant_vars = selected_df0,
+                                                 significant_vars = results_7390_coef_df, #selected_df0,
                                                  clinical_cleaned= clinical_cleaned_2990_imputed,
                                                  n_group = 4)
 
@@ -256,6 +291,11 @@ fitted_model_2990 = results_2990$model
 calculate_time_auc_cindex(model_type = "Cox",
                           fitted_model_2990,
                           df = clinical_cleaned_risk_2990) # not possible because NA in data
+
+calculate_time_auc_cindex(model_type = "Cox",
+                          fitted_model_7390,
+                          df = clinical_cleaned_risk_2990) # not possible because NA in data
+
 
 
 

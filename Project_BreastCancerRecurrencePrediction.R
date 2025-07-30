@@ -110,10 +110,10 @@ clinical_cleaned_2990 <- clean_clinical_data(col_selected_2990, df_clinic_raw = 
 colSums(is.na(clinical_cleaned_2990))
 # since GSE7390 patients didn't receive szstemic therapy and lympha-note negative
 clinical_cleaned_2990_naomt <- clinical_cleaned_2990 %>%
- # na.omit() %>%
-  filter(treatment == "none" & node == "0") %>%
-  filter(!is.na(node)) %>%
-  select(-treatment)
+  na.omit() %>%
+#   filter(treatment == "none" & node == "0") %>%
+#   filter(!is.na(node)) %>%
+   select(-treatment)
 
 
 # Box plot of continuos variable
@@ -193,4 +193,43 @@ rsf_fit$importance
 calculate_time_auc_cindex("RSF", fitted_model = rsf_fit, df = clinical_cleaned_7390_imputed)
 calculate_time_auc_cindex("RSF", fitted_model = rsf_fit, df = clinical_cleaned_oxfu_naomt)
 calculate_time_auc_cindex("RSF", fitted_model = rsf_fit, df = clinical_cleaned_2990_naomt)
+calculate_time_auc_cindex("RSF", fitted_model = rsf_fit, df = clinical_cleaned_11121)
+
+
+#######################################################################################
+
+### randomforest new
+predictors <- c("grade", "size", "age", "er", "risk_score")
+clinical_rsf <- clinical_cleaned_risk_7390[, c("t_dmfs", "e_dmfs", predictors)]
+#clinical_rsf <- clinical_cleaned_7390_imputed[, c("t_dmfs", "e_dmfs", predictors)]
+# 构建 RSF 模型
+result_new_rsf <- rsf_kfold_cv_best(clinical_rsf, K = 5)
+# Best model
+rsf_fit_new <- result_new_rsf$best_model
+# Variable importance from retrained model with complete data
+importance_new <- result_new_rsf$importance
+
+# evaluate the model
+calculate_time_auc_cindex("RSF", fitted_model = rsf_fit_new, df = clinical_cleaned_risk_7390)
+
+#calculate_time_auc_cindex("RSF", fitted_model = rsf_fit, df = clinical_cleaned_oxfu_naomt)
+calculate_time_auc_cindex("RSF", fitted_model = rsf_fit_new, df = clinical_cleaned_risk_2990)
+
+# rebuild the model with non negative importance predictors
+#predictors <- c("size", "grade")
+#clinical_rsf <- clinical_cleaned_7390_imputed[, c("t_dmfs", "e_dmfs", predictors)]
+# 构建 RSF 模型
+rsf_fit2 <- rfsrc(Surv(t_dmfs, e_dmfs) ~ ., data = clinical_rsf, ntree = 1000, importance = TRUE)
+rsf_fit2$importance
+calculate_time_auc_cindex("RSF", fitted_model = rsf_fit2, df = clinical_cleaned_risk_2990)
+
+
+
+
+
+
+# For RSF model
+calculate_time_auc_cindex("RSF", fitted_model = rsf_fit, df = clinical_cleaned_7390_imputed)
+calculate_time_auc_cindex("RSF", fitted_model = rsf_fit, df = clinical_cleaned_oxfu_naomt)
+
 calculate_time_auc_cindex("RSF", fitted_model = rsf_fit, df = clinical_cleaned_11121)
