@@ -383,37 +383,177 @@ combat_three_batches <- function(expr_A, clin_A,
 
 # Function to build and test a Cox proportional hazards model
 fit_cox_model <- function(predictors, df) {
-  # Build formula: Surv(...) ~ var1 + var2 + ...
+  tryCatch({
+    # 构建公式
+    formula <- as.formula(paste(
+      "Surv(t_dmfs, e_dmfs) ~",
+      paste(predictors, collapse = " + ")
+    ))
+    
+    # 拟合 Cox 模型
+    cox_model <- coxph(formula, data = df, x = TRUE, y = TRUE)
+    
+    # 模型摘要
+    cat("Cox model summary:\n")
+    model_summary <- summary(cox_model)
+    print(model_summary)
+    
+    # 系数表
+    coef_df <- data.frame(
+      variable = rownames(model_summary$coefficients),
+      coef = model_summary$coefficients[, "coef"],
+      zscore = model_summary$coefficients[, "z"],
+      pvalue = model_summary$coefficients[, "Pr(>|z|)"]
+    )
+    
+    # PH 假设检验
+    test_ph <- cox.zph(cox_model)
+    print("Test proportional hazards assumption:")
+    print(test_ph)
+    
+    # 返回固定结构
+    list(
+      model = cox_model,
+      ph_test = test_ph,
+      coef_table = coef_df
+    )
+  }, error = function(e) {
+    message("Error in fit_cox_model: ", e$message)
+    # 返回固定结构，值为 NULL
+    list(
+      model = NULL,
+      ph_test = NULL,
+      coef_table = NULL
+    )
+  })
+}
+
+
+
+
+
+# fit_cox_model <- function(predictors, df) {
+#   # Build formula: Surv(...) ~ var1 + var2 + ...
+#   formula <- as.formula(paste(
+#     "Surv(t_dmfs, e_dmfs) ~",
+#     paste(predictors, collapse = " + ")
+#   ))
+#   
+#   # Fit Cox proportional hazards model
+#   cox_model <- coxph(formula, data = df, x = TRUE, y = TRUE)
+#   
+#   # Print model summary
+#   cat("Cox model summary:\n")
+#   model_summary <- summary(cox_model)
+#   print(model_summary)
+#   
+#   # Extract coefficients, z-score, and p-value
+#   coef_df <- data.frame(
+#     variable = rownames(model_summary$coefficients),
+#     coef = model_summary$coefficients[, "coef"],
+#     zscore = model_summary$coefficients[, "z"],
+#     pvalue = model_summary$coefficients[, "Pr(>|z|)"]
+#   )
+#   
+#   # Proportional hazards assumption test
+#   test_ph <- cox.zph(cox_model)
+#   print("Test proportional hazards assumption:")
+#   print(test_ph)
+#   
+#   # Plot Schoenfeld residuals test
+#   #print(ggcoxzph(test_ph))
+#   
+#   # Return everything
+#   return(list(
+#     model = cox_model,
+#     ph_test = test_ph,
+#     coef_table = coef_df
+#   ))
+# }
+
+
+
+
+library(survival)
+library(coxphf)
+
+fit_cox_model_firth <- function(predictors, df, coef_max = 15) {
+  # 构建公式
   formula <- as.formula(paste(
     "Surv(t_dmfs, e_dmfs) ~",
     paste(predictors, collapse = " + ")
   ))
   
-  # Fit Cox proportional hazards model
-  cox_model <- coxph(formula, data = df, x = TRUE, y = TRUE)
+  # 先尝试普通 Cox 拟合
+  cox_model <- tryCatch({
+    coxph(formula, data = df, x = TRUE, y = TRUE)
+  }, error = function(e) NULL)
   
-  # Print model summary
+  use_firth <- FALSE
+  
+  # 检查是否需要切换到 Firth Cox
+  if (is.null(cox_model)) {
+    message("Cox model failed, switching to Firth Cox.")
+    use_firth <- TRUE
+  } else {
+    # 检查系数是否发散
+    if (any(abs(coef(cox_model)) > coef_max, na.rm = TRUE)) {
+      message("Coefficient > ", coef_max, " detected, switching to Firth Cox.")
+      use_firth <- TRUE
+    }
+    # 检查 Concordance 是否为 1（完全分离）
+    concordance_val <- tryCatch({
+      suppressWarnings(summary(cox_model)$concordance[1])
+    }, error = function(e) NA)
+    if (!is.na(concordance_val) && concordance_val >= 0.98) {
+      message("Concordance = 1 detected, switching to Firth Cox.")
+      use_firth <- TRUE
+    }
+  }
+  
+  # 如果触发 Firth Cox
+  if (use_firth) {
+    cox_model <- tryCatch({
+      coxphf(formula, data = df)
+    }, error = function(e) NULL)
+    if (is.null(cox_model)) {
+      warning("Firth Cox model also failed. Returning NULL.")
+      return(NULL)
+    }
+    model_summary <- summary(cox_model)
+  } else {
+    model_summary <- summary(cox_model)
+  }
+  
+  # 输出模型信息
   cat("Cox model summary:\n")
-  model_summary <- summary(cox_model)
   print(model_summary)
   
-  # Extract coefficients, z-score, and p-value
-  coef_df <- data.frame(
-    variable = rownames(model_summary$coefficients),
-    coef = model_summary$coefficients[, "coef"],
-    zscore = model_summary$coefficients[, "z"],
-    pvalue = model_summary$coefficients[, "Pr(>|z|)"]
-  )
+  # 提取系数信息（Firth 和普通 Cox 格式略不同，这里做兼容）
+  if ("coefficients" %in% names(model_summary)) {
+    coef_df <- data.frame(
+      variable = rownames(model_summary$coefficients),
+      coef = model_summary$coefficients[, "coef"],
+      zscore = model_summary$coefficients[, "z"],
+      pvalue = model_summary$coefficients[, "Pr(>|z|)"]
+    )
+  } else {
+    coef_df <- data.frame(
+      variable = rownames(model_summary$coeff),
+      coef = model_summary$coeff[, "coef"],
+      pvalue = model_summary$coeff[, "p"],
+      zscore = NA
+    )
+  }
   
-  # Proportional hazards assumption test
-  test_ph <- cox.zph(cox_model)
-  print("Test proportional hazards assumption:")
-  print(test_ph)
+  # PH 假设检验（只有普通 Cox 才能做）
+  test_ph <- NULL
+  if (!use_firth) {
+    test_ph <- cox.zph(cox_model)
+    print("Test proportional hazards assumption:")
+    print(test_ph)
+  }
   
-  # Plot Schoenfeld residuals test
-  print(ggcoxzph(test_ph))
-  
-  # Return everything
   return(list(
     model = cox_model,
     ph_test = test_ph,
@@ -524,20 +664,20 @@ calculate_time_auc_cindex <- function(model_type = c("Cox", "RSF"), fitted_model
     sum(df$e_dmfs == 1 & df$t_dmfs >= (t - bin_width/2) & df$t_dmfs < (t + bin_width/2))
   })
   
-  # Plot AUC with event count as secondary axis
-  par(mar = c(5, 4, 4, 4) + 0.3)  # Leave room for right axis
-  plot(auc_df$Time, auc_df$AUC, type = "l", col = "green", lwd = 2,
-       xlab = "Time", ylab = "AUC",
-       main = paste("Time-Dependent AUC and Event Count (", model_type, ")", sep = ""))
-  grid()
-  
-  par(new = TRUE)
-  plot(auc_df$Time, event_counts, type = "l", col = "red", lwd = 2, axes = FALSE,
-       xlab = "", ylab = "", lty = 2)
-  axis(side = 4, col.axis = "red", col = "red")
-  mtext("Number of Events", side = 4, line = 3, col = "red")
-  legend("bottomleft", legend = c("AUC", "Event Count"),
-         col = c("green", "red"), lty = c(1, 2), lwd = 2, bty = "n")
+  # # Plot AUC with event count as secondary axis
+  # par(mar = c(5, 4, 4, 4) + 0.3)  # Leave room for right axis
+  # plot(auc_df$Time, auc_df$AUC, type = "l", col = "green", lwd = 2,
+  #      xlab = "Time", ylab = "AUC",
+  #      main = paste("Time-Dependent AUC and Event Count (", model_type, ")", sep = ""))
+  # grid()
+  # 
+  # par(new = TRUE)
+  # plot(auc_df$Time, event_counts, type = "l", col = "red", lwd = 2, axes = FALSE,
+  #      xlab = "", ylab = "", lty = 2)
+  # axis(side = 4, col.axis = "red", col = "red")
+  # mtext("Number of Events", side = 4, line = 3, col = "red")
+  # legend("bottomleft", legend = c("AUC", "Event Count"),
+  #        col = c("green", "red"), lty = c(1, 2), lwd = 2, bty = "n")
    
   # compute time-weighted average AUC (iAUC)
   time_diffs <- diff(c(auc_df$Time[1] - (auc_df$Time[2] - auc_df$Time[1]), auc_df$Time))
@@ -642,6 +782,30 @@ standardize_with_train <- function(gene_mat_train, gene_mat_valid, significant_g
   
   return(selected_gene_mat_valid_scaled)
 }
+
+
+
+standardize_with_train_clinical <- function(train_clinical, test_clinical, scale_cols) {
+  # Description: Standardize selected columns in test_clinical using the mean 
+  # and sd from train_clinical
+
+  # Calculate column-wise means and standard deviations from the training data
+  means <- sapply(train_clinical[, scale_cols, drop = FALSE], mean, na.rm = TRUE)
+  sds   <- sapply(train_clinical[, scale_cols, drop = FALSE], sd, na.rm = TRUE)
+  
+  # Copy the test data
+  test_scaled <- test_clinical
+  
+  # Subtract means
+  test_scaled[, scale_cols] <- sweep(test_clinical[, scale_cols, drop = FALSE], 2, means, "-")
+  # Divide by standard deviations
+  test_scaled[, scale_cols] <- sweep(test_scaled[, scale_cols, drop = FALSE], 2, sds, "/")
+  
+  # Return standardized test data
+  return(test_scaled)
+}
+
+
 
 
 
@@ -783,9 +947,9 @@ lasso_cox_cv <- function(train_expr, train_clinical, sig_gene_df) {
   set.seed(123)
   cvfit <- cv.glmnet(X, y, family = "cox", alpha = 1, nfolds = 10)
   
-  plot(cvfit)
-  abline(v = log(cvfit$lambda.min), col = "red", lty = 2)   
-  abline(v = log(cvfit$lambda.1se), col = "blue", lty = 2)  
+  # plot(cvfit)
+  # abline(v = log(cvfit$lambda.min), col = "red", lty = 2)   
+  # abline(v = log(cvfit$lambda.1se), col = "blue", lty = 2)  
   
   coef_opt <- coef(cvfit, s = "lambda.min")
   selected_genes <- as.matrix(coef_opt)
