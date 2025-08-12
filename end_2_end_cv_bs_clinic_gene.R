@@ -12,6 +12,42 @@ options(scipen = 999)
 
 ## load dataset
 #gset_7390 <- getGEO("GSE7390", GSEMatrix=TRUE)
+gset_39582 <- getGEO("GSE39582", GSEMatrix=TRUE)
+expr_39582 <- exprs(gset_39582[[1]])
+clinical_39582 <- pData(gset_39582[[1]])
+
+col_selected_39582 <- c(
+  "characteristics_ch1.2",
+  "characteristics_ch1.3",
+  "characteristics_ch1.4",
+  "characteristics_ch1.5",
+  "characteristics_ch1.6",
+  "characteristics_ch1.7",
+  "characteristics_ch1.8",
+  "characteristics_ch1.9",
+  "characteristics_ch1.13",
+  "characteristics_ch1.14",
+  "characteristics_ch1.15",
+  "characteristics_ch1.16",
+  "characteristics_ch1.17",
+  "characteristics_ch1.18",
+  "characteristics_ch1.22",
+  "characteristics_ch1.26",
+  "characteristics_ch1.30"
+)
+
+
+clinical_cleaned_39582 <- clean_clinical_data(col_selected = col_selected_39582, df_clinic_raw = clinical_39582)
+colSums(is.na(clinical_cleaned_7390))
+
+
+
+
+
+
+
+
+
 expr_7390 <- exprs(gset_7390[[1]])
 clinical_7390 <- pData(gset_7390[[1]])
 
@@ -132,11 +168,11 @@ remove_high_corr <- function(df, threshold = 0.9) {
 
 run_bootstrap_validation_safe <- function(expr_mat, clinical_df, 
                                           B = 10, 
-                                          seed = 123, 
-                                          max_vars = 30, 
-                                          min_epv = 1, 
-                                          coef_max = 10) {
-  set.seed(seed)
+                                          #max_vars = 30, 
+                                          seed = 10000,
+                                          min_epv = 2.5, 
+                                          coef_max = 10,
+                                          min_concord = 0.98) {
   
   n <- ncol(expr_mat)
   perf_list <- list()
@@ -149,12 +185,19 @@ run_bootstrap_validation_safe <- function(expr_mat, clinical_df,
   best_genes <- NULL
   best_iter <- NULL
   best_method <- NULL
-  
+  train_indices_list <- list()
   
   for (b in 1:B) {
+    
     # Bootstrap 抽样
+    set.seed(seed + b) 
+    message(sprintf("Bootstrap %d: seed = %d", b, seed + b))
+    
     train_idx <- sample(seq_len(n), size = n, replace = TRUE)
     test_idx  <- setdiff(seq_len(n), unique(train_idx))  # OOB 样本
+    
+    train_indices_list[[b]] <- train_idx
+    
     if (length(test_idx) == 0) next
     
     train_expr     <- expr_mat[, train_idx]
@@ -164,11 +207,30 @@ run_bootstrap_validation_safe <- function(expr_mat, clinical_df,
     
     # 事件数
     events_train <- sum(train_clinical$e_dmfs)
+    message(sprintf("Bootstrap %d: Number of events in training set = %d", b, events_train))
     
     # Step 1: 单变量 Cox
     sig_gene_df <- batch_univariate_cox_regression(train_expr, train_clinical)
-    sig_gene_df <- sig_gene_df[sig_gene_df$p.value < 0.05, ]
-    if (nrow(sig_gene_df) == 0) next
+    # sig_gene_df <- sig_gene_df[sig_gene_df$p.value < 0.05, ]
+    # if (nrow(sig_gene_df) == 0) next
+    
+    # 动态设置 p-value 阈值
+    p_thresh <- if (events_train < 40) {
+      0.01
+    } else if (events_train < 55) {
+      0.05
+    } else {
+      0.1
+    }
+    
+    sig_gene_df <- sig_gene_df[sig_gene_df$p.value < p_thresh, ]
+    if (nrow(sig_gene_df) == 0) {
+      message(sprintf("Bootstrap %d skipped: No genes passed p < %.2f (Events: %d)", b, p_thresh, events_train))
+      next
+    }
+    
+    
+    
     
     significant_gene = sig_gene_df$gene
     
@@ -198,16 +260,45 @@ run_bootstrap_validation_safe <- function(expr_mat, clinical_df,
     selected_gene_df <- lasso_cox_cv(train_expr_scaled, train_clinical, sig_gene_df)
     
     # 限制变量数
-    if (nrow(selected_gene_df) > max_vars) {
-      selected_gene_df <- selected_gene_df[order(abs(selected_gene_df$coef), decreasing = TRUE), ]
-      selected_gene_df <- selected_gene_df[1:max_vars, ]
-    }
+    # if (nrow(selected_gene_df) > max_vars) {
+    #   selected_gene_df <- selected_gene_df[order(abs(selected_gene_df$coef), decreasing = TRUE), ]
+    #   selected_gene_df <- selected_gene_df[1:max_vars, ]
+    # }
+    #############################
+    # # 动态限制变量数：最多不超过 events_train / min_epv
+    # max_vars_allowed <- floor(events_train / min_epv)
+    # if (nrow(selected_gene_df) > max_vars_allowed) {
+    #   selected_gene_df <- selected_gene_df[order(abs(selected_gene_df$coef), decreasing = TRUE), ]
+    #   selected_gene_df <- selected_gene_df[1:max_vars_allowed, ]
+    # }
+    # 
+    # 
+    # # EPV 检查
+    # message(sprintf("Bootstrap %d: Events = %d, Vars = %d, EPV = %.2f", 
+    #                 b, events_train, nrow(selected_gene_df), events_train / nrow(selected_gene_df)))
+    # 
+    # if (events_train / nrow(selected_gene_df) < min_epv) {
+    #   message(sprintf("Bootstrap %d skipped: EPV too low (%0.2f)", b, events_train / nrow(selected_gene_df)))
+    #   next
+    # }
+    #############################
+    # Step: 动态筛选变量，满足 EPV 要求
+    max_vars_allowed <- floor(events_train / min_epv)
     
-    # EPV 检查
-    if (events_train / nrow(selected_gene_df) < min_epv) {
-      message(sprintf("Bootstrap %d skipped: EPV too low (%0.2f)", b, events_train / nrow(selected_gene_df)))
+    if (max_vars_allowed == 0 || nrow(selected_gene_df) == 0) {
+      message(sprintf("Bootstrap %d skipped: Too few events or no selected genes", b))
       next
     }
+    
+    # 限制变量数量（最多 max_vars_allowed 个）
+    selected_gene_df <- selected_gene_df[order(abs(selected_gene_df$coef), decreasing = TRUE), ]
+    selected_gene_df <- selected_gene_df[1:min(nrow(selected_gene_df), max_vars_allowed), ]
+    
+    # 打印信息
+    message(sprintf("Bootstrap %d: Events = %d, Vars = %d, EPV = %.2f", 
+                    b, events_train, nrow(selected_gene_df), events_train / nrow(selected_gene_df)))
+    
+    
     
     # Step 3: 风险分数
     clinical_cleaned_risk_train <- compute_risk_score(
@@ -251,7 +342,7 @@ run_bootstrap_validation_safe <- function(expr_mat, clinical_df,
     concordance_val <- tryCatch({
       suppressWarnings(summary(results_train$model)$concordance[1])
     }, error = function(e) NA)
-    if (!is.na(concordance_val) && concordance_val >= 0.98) {
+    if (!is.na(concordance_val) && concordance_val >= min_concord) {
       message(sprintf("Bootstrap %d skipped, Concordance >= 0.98 detected ", as.integer(b)))
       next
     }
@@ -363,17 +454,20 @@ run_bootstrap_validation_safe <- function(expr_mat, clinical_df,
     best_perf   = best_perf,    # ⬅ 最优 iAUC
     best_predictors = best_genes,   # ⬅ 最优模型的基因列表或者RSF预测变量
     best_iter = best_iter,
-    best_method = best_method
+    best_method = best_method,
+    train_indices_list
   )
 }
 
 
-res <- run_bootstrap_validation_safe(expr_mat, clinical_df, 
-                                          B = , 
-                                          seed = 123, 
-                                          max_vars = 20, 
-                                          min_epv = 1, 
-                                          coef_max = 10) 
+res2 <- run_bootstrap_validation_safe(expr_mat,
+                                     clinical_df, 
+                                     B = 30,
+                                     seed = 20000,
+                                     # max_vars = 20,
+                                     min_epv = 2.5,
+                                     coef_max = 15,
+                                     min_concord = 0.98) 
 
 
 

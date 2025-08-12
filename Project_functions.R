@@ -143,9 +143,9 @@ impute_missing_value <- function(clinical_cleaned, selected_col, missed_col) {
   
   # Assign specific imputation methods for each missed_col
   for (col in missed_col) {
-    if (col == "grade") {
+    if (col %in% c("grade", "TNM_T", "TNM_N")) {
       methods[col] <- "polr"     # Ordered categorical
-    } else if (col == "er") {
+    } else if (col %in% c("er", "TNM_M", "Chemotherapy_Adjuvant", "MMR_Status", "KRAS_Mutation")) {
       methods[col] <- "logreg"   # Binary categorical
     } else {
       methods[col] <- ""         # Let mice choose default method
@@ -153,21 +153,70 @@ impute_missing_value <- function(clinical_cleaned, selected_col, missed_col) {
   }
   
   # Perform multiple imputation
-  imp <- mice(df_miss, m = 10, method = methods, seed = 123)
+  imp <- mice(df_miss, m = 20, method = methods, seed = 123)
   
-  # Define custom mode function for majority voting
-  Mode <- function(x) {
-    ux <- unique(x)
-    ux[which.max(tabulate(match(x, ux)))]
-  }
-  
-  # Replace missing values for each target column
+  # # Define custom mode function for majority voting
+  # Mode <- function(x) {
+  #   ux <- unique(x)
+  #   ux[which.max(tabulate(match(x, ux)))]
+  # }
+  # 
+  # # Replace missing values for each target column
   for (col in missed_col) {
     if (!is.null(imp$imp[[col]]) && nrow(imp$imp[[col]]) > 0) {
       filled_values <- apply(imp$imp[[col]], 1, Mode)
       print(paste("Filling column:", col))
       print(filled_values)
-      clinical_cleaned[[col]][as.numeric(names(filled_values))] <- filled_values
+      clinical_cleaned[[col]][names(filled_values)] <- filled_values
+      #clinical_cleaned[[col]][as.numeric(names(filled_values))] <- filled_values
+    }
+  # }
+  # 
+  # English comments as requested
+  Mode <- function(x) {
+    ux <- unique(x)
+    ux[which.max(tabulate(match(x, ux)))]
+  }
+  
+  # Suppose rownames(clinical_cleaned) are the GSM IDs
+  # If you have an ID column instead, replace 'rownames(clinical_cleaned)' with that column.
+  
+  for (col in missed_col) {
+    tbl <- imp$imp[[col]]
+    # skip if no imputations for this column
+    if (is.null(tbl) || nrow(tbl) == 0) next
+    
+    # row-wise mode across m imputations -> one value per missing row
+    filled_values <- apply(tbl, 1, Mode)  # named vector; names are IDs (GSM...)
+    ids  <- names(filled_values)
+    
+    # map IDs to row positions
+    idx <- match(ids, rownames(clinical_cleaned))
+    keep <- !is.na(idx) & !is.na(filled_values)
+    if (!any(keep)) next
+    
+    vals <- filled_values[keep]
+    pos  <- idx[keep]
+    
+    # assign safely depending on column type
+    if (is.factor(clinical_cleaned[[col]])) {
+      # expand levels to include new values
+      new_levels <- union(levels(clinical_cleaned[[col]]), unique(vals))
+      clinical_cleaned[[col]] <- factor(clinical_cleaned[[col]], levels = new_levels)
+      clinical_cleaned[[col]][pos] <- vals
+    } else if (is.character(clinical_cleaned[[col]])) {
+      clinical_cleaned[[col]][pos] <- as.character(vals)
+    } else if (is.numeric(clinical_cleaned[[col]])) {
+      suppressWarnings({
+        num_vals <- as.numeric(vals)
+      })
+      ok <- !is.na(num_vals)
+      clinical_cleaned[[col]][pos[ok]] <- num_vals[ok]
+    } else {
+      # fallback: coerce to character, assign, then factor back if needed
+      tmp <- as.character(clinical_cleaned[[col]])
+      tmp[pos] <- as.character(vals)
+      clinical_cleaned[[col]] <- tmp
     }
   }
   
@@ -703,7 +752,7 @@ library(randomForestSRC)
 library(survival)
 library(riskRegression)
 
-rsf_kfold_cv_best <- function(data, K = 5, ntree = 1000, seed = 123) {
+rsf_kfold_cv_best <- function(data, K = 5, ntree = 1000, seed = NULL) {
   # Performs K-fold cross-validation for a Random Survival Forest model.
   # Retrain the final model on the entire dataset to extract variable importance.
   # Returns the model with the highest C-index on the validation fold.
@@ -713,7 +762,8 @@ rsf_kfold_cv_best <- function(data, K = 5, ntree = 1000, seed = 123) {
   #   Best fold number
   #   Variable importance
    
-  set.seed(seed)
+  if (!is.null(seed)) set.seed
+  
   folds <- sample(rep(1:K, length.out = nrow(data)))
   cindex_vec <- numeric(K)
   model_list <- vector("list", K)
