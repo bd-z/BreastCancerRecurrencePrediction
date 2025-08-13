@@ -156,30 +156,23 @@ impute_missing_value <- function(clinical_cleaned, selected_col, missed_col) {
   imp <- mice(df_miss, m = 20, method = methods, seed = 123)
   
   # # Define custom mode function for majority voting
-  # Mode <- function(x) {
-  #   ux <- unique(x)
-  #   ux[which.max(tabulate(match(x, ux)))]
-  # }
-  # 
-  # # Replace missing values for each target column
-  for (col in missed_col) {
-    if (!is.null(imp$imp[[col]]) && nrow(imp$imp[[col]]) > 0) {
-      filled_values <- apply(imp$imp[[col]], 1, Mode)
-      print(paste("Filling column:", col))
-      print(filled_values)
-      clinical_cleaned[[col]][names(filled_values)] <- filled_values
-      #clinical_cleaned[[col]][as.numeric(names(filled_values))] <- filled_values
-    }
-  # }
-  # 
-  # English comments as requested
   Mode <- function(x) {
     ux <- unique(x)
     ux[which.max(tabulate(match(x, ux)))]
   }
+   
+  # # # Replace missing values for each target column
+  # for (col in missed_col) {
+  #   if (!is.null(imp$imp[[col]]) && nrow(imp$imp[[col]]) > 0) {
+  #     filled_values <- apply(imp$imp[[col]], 1, Mode)
+  #     print(paste("Filling column:", col))
+  #     print(filled_values)
+  #     clinical_cleaned[[col]][names(filled_values)] <- filled_values
+  #     #clinical_cleaned[[col]][as.numeric(names(filled_values))] <- filled_values
+  #   }
+  # # }
+  # # 
   
-  # Suppose rownames(clinical_cleaned) are the GSM IDs
-  # If you have an ID column instead, replace 'rownames(clinical_cleaned)' with that column.
   
   for (col in missed_col) {
     tbl <- imp$imp[[col]]
@@ -219,9 +212,10 @@ impute_missing_value <- function(clinical_cleaned, selected_col, missed_col) {
       clinical_cleaned[[col]] <- tmp
     }
   }
-  
   return(clinical_cleaned)
-}
+  }
+  
+
 
 
 align_expr_clin <- function(expr, clin, sample_col = 1) {

@@ -41,7 +41,7 @@ col_selected_39582 <- c(
 
 
 
-clinical_selected <- df_clinic_raw[col_selected_39582]
+clinical_selected <- clinical_39582[col_selected_39582]
 
 
 
@@ -152,7 +152,7 @@ sum(is.na(clinical_cleaned_39582))
 
 
 
-generate_box_plots(data=clinical_cleaned_filtered_39582, continuous_variables = c("Age_at_Diagnosis", "OS_Delay", "OS_Event")) 
+generate_box_plots(data=clinical_cleaned_39582, continuous_variables = c("Age_at_Diagnosis", "OS_Delay", "OS_Event")) 
 
 # 查找包含 NA 的列名
 na_columns <- colnames(clinical_cleaned_39582)[colSums(is.na(clinical_cleaned_39582)) > 0]
