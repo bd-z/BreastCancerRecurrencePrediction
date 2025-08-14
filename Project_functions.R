@@ -746,7 +746,7 @@ library(randomForestSRC)
 library(survival)
 library(riskRegression)
 
-rsf_kfold_cv_best <- function(data, K = 5, ntree = 1000, seed = NULL) {
+rsf_kfold_cv_best <- function(data, K = 5, ntree = 1000) {
   # Performs K-fold cross-validation for a Random Survival Forest model.
   # Retrain the final model on the entire dataset to extract variable importance.
   # Returns the model with the highest C-index on the validation fold.
@@ -756,7 +756,7 @@ rsf_kfold_cv_best <- function(data, K = 5, ntree = 1000, seed = NULL) {
   #   Best fold number
   #   Variable importance
    
-  if (!is.null(seed)) set.seed
+  #if (!is.null(seed)) set.seed
   
   folds <- sample(rep(1:K, length.out = nrow(data)))
   cindex_vec <- numeric(K)
@@ -934,7 +934,7 @@ split_expr_clinical <- function(expr_mat, clinical_df,
 
 
 
-batch_univariate_cox_regression <- function(train_expr, train_clinical) {
+batch_univariate_cox_regression <- function(train_expr, train_clinical, p_value) {
   # Description: Performs univariate Cox regression for each gene in the expression matrix
   # to evaluate associations with survival outcomes (DMFS time and status).
   # Input: train_expr (gene expression matrix), train_clinical (clinical data with t_dmfs and e_dmfs)
@@ -969,7 +969,7 @@ batch_univariate_cox_regression <- function(train_expr, train_clinical) {
   cox_df <- cox_df[order(cox_df$p.value), ]  # Sort by p-value
   
   # Filter significant genes (p < 0.05)
-  sig_genes_df <- subset(cox_df, p.value < 0.05)
+  sig_genes_df <- subset(cox_df, p.value < p_value)
   
   return(sig_genes_df)
 }
@@ -977,13 +977,12 @@ batch_univariate_cox_regression <- function(train_expr, train_clinical) {
 # Example usage:
 # sig_genes_df <- batch_univariate_cox_regression(train_expr, train_clinical)
 
-lasso_cox_cv <- function(train_expr, train_clinical, sig_gene_df) {
+lasso_cox_cv <- function(train_expr, train_clinical, sig_genes) {
   # Lasso Cox Regression with Cross-Validation
   # Description: Runs Lasso Cox with 10-fold CV to select significant genes.
-  # Input: train_expr, train_clinical, sig_gene_df
+  # Input: train_expr, train_clinical, sig_gene
   # Output: selected_gene_df
   
-  sig_genes <- sig_gene_df$gene
   expr_transposed <- t(train_expr[sig_genes, ])
   X <- expr_transposed
   y <- Surv(train_clinical$t_dmfs, train_clinical$e_dmfs)
@@ -1003,7 +1002,107 @@ lasso_cox_cv <- function(train_expr, train_clinical, sig_gene_df) {
   return(selected_gene_df)
 }
 
-# Example: selected_gene_df <- lasso_cox_cv(train_expr, train_clinical, sig_gene_df)
+# Example: selected_gene_df <- lasso_cox_cv(train_expr, train_clinical, sig_gene)
+
+# 重复 10 折 CV LASSO Cox，统计非零系数频率
+# repeat_cv_lasso_cox <- function(X, y, repeats = 50, nfolds = 10, alpha = 1, seed = 123) {
+#   set.seed(seed)
+#   
+#   gene_names <- colnames(X)
+#   gene_counts <- setNames(rep(0, length(gene_names)), gene_names)
+#   
+#   for (i in 1:repeats) {
+#     cvfit <- cv.glmnet(X, y, family = "cox", alpha = alpha, nfolds = nfolds)
+#     coef_nonzero <- coef(cvfit, s = "lambda.min")   # lambda.1se 可替换
+#     nonzero_genes <- rownames(coef_nonzero)[as.numeric(coef_nonzero) != 0]
+#     nonzero_genes <- setdiff(nonzero_genes, "(Intercept)")
+#     gene_counts[nonzero_genes] <- gene_counts[nonzero_genes] + 1
+#   }
+#   
+#   # 转为数据框，按频率排序
+#   gene_freq_df <- data.frame(
+#     gene = names(gene_counts),
+#     freq = gene_counts / repeats
+#   )
+#   gene_freq_df <- gene_freq_df[order(-gene_freq_df$freq), ]
+#   return(gene_freq_df)
+# }
+
+# ===== 使用示例 =====
+# y 必须是 Surv(t, event) 对象
+# X 是样本 × 基因 的矩阵
+
+#expr_transposed <- t(train_expr_filtered[significant_gene2, ])
+#X <- expr_transposed
+#y <- Surv(train_clinical$t_dmfs, train_clinical$e_dmfs)
+
+
+#gene_freq <- repeat_cv_lasso_cox(X, y, repeats = 5, nfolds = 10)
+# head(gene_freq)
+
+
+
+library(glmnet)
+library(survival)
+
+# 重复 K 折 CV LASSO Cox，统计频率和平均系数
+repeat_cv_lasso_cox <- function(train_expr = train_expr_filtered,
+                                train_clinical,
+                                significant_gene_vec= significant_gene2,
+                                repeats = 20,
+                                nfolds = 10,
+                                alpha = 1) {
+  
+  
+  X <- t(train_expr[significant_gene_vec, ])
+  
+  y <- Surv(train_clinical$t_dmfs, train_clinical$e_dmfs)
+  
+  gene_names <- colnames(X)
+  gene_counts <- setNames(rep(0, length(gene_names)), gene_names)
+  gene_coef_sum <- setNames(rep(0, length(gene_names)), gene_names)
+  
+  for (i in 1:repeats) {
+    cvfit <- cv.glmnet(X, y, family = "cox", alpha = alpha, nfolds = nfolds)
+    coef_nonzero <- as.numeric(coef(cvfit, s = "lambda.min"))
+    names(coef_nonzero) <- rownames(coef(cvfit))
+    
+    for (gene in gene_names) {
+      if (coef_nonzero[gene] != 0) {
+        gene_counts[gene] <- gene_counts[gene] + 1
+        gene_coef_sum[gene] <- gene_coef_sum[gene] + coef_nonzero[gene]
+      }
+    }
+  }
+  
+  # 转为数据框，计算频率和平均系数
+  gene_freq_df <- data.frame(
+    gene = gene_names,
+    freq = gene_counts / repeats,
+    mean_coef = ifelse(gene_counts > 0, gene_coef_sum / gene_counts, 0)
+  )
+  
+  gene_freq_df <- gene_freq_df[order(-gene_freq_df$freq, -abs(gene_freq_df$mean_coef)), ]
+  return(gene_freq_df)
+}
+
+# ===== 使用示例 =====
+# y 必须是 Surv(t, event) 对象
+# X 是样本 × 基因 的矩阵
+#gene_freq_df <- repeat_cv_lasso_cox(X, y, repeats = 10, nfolds = 10)
+# head(gene_freq)
+
+gene_freq_df3 <- repeat_cv_lasso_cox(train_expr = train_expr_filtered,
+                                train_clinical,
+                                significant_gene_vec= significant_gene2,
+                                repeats = 2,
+                                nfolds = 10,
+                                alpha = 1)
+
+
+
+
+
 
 
 
@@ -1102,3 +1201,53 @@ cox_rsf_workflow <- function(gene_expr,
 
 # Example usage:
 # result <- cox_workflow(gene_expr, clinical_data_imputed, train_frac = 0.7, seed = 345)
+
+remove_high_corr <- function(df, threshold = 0.9) {
+  # df 是数据框（只包含数值型预测变量，不包括生存时间和事件）
+  corr_matrix <- cor(df, method = "pearson", use = "pairwise.complete.obs")
+  
+  # 找出高度相关的变量对
+  high_corr <- findCorrelation(corr_matrix, cutoff = threshold, names = TRUE)
+  
+  if (length(high_corr) > 0) {
+    message(sprintf("Removed %d highly correlated variables (>|%0.2f|)", 
+                    length(high_corr), threshold))
+    df <- df[, !(colnames(df) %in% high_corr), drop = FALSE]
+  }
+  return(df)
+}
+
+# 
+# remove_high_corr_genes <- function(expr_mat, cutoff = 0.90) {
+#   # expr_mat: matrix or data.frame, genes x samples (already scaled)
+#   # cutoff: correlation threshold, e.g., 0.90
+#   if (is.null(expr_mat) || !is.matrix(expr_mat)) return(expr_mat)
+#   if (nrow(expr_mat) < 2) return(expr_mat)  # 少于2个基因直接返回
+#   
+#   
+#   # 1. Compute correlation between genes
+#   cor_mat <- cor(t(expr_mat), use = "pairwise.complete.obs")
+#   
+#   # 2. Find highly correlated genes
+#   high_corr_idx <- caret::findCorrelation(cor_mat, cutoff = cutoff)
+#   
+#   # 3. Remove them and return filtered matrix
+#   filtered_mat <- expr_mat[-high_corr_idx, ]
+#   
+#   return(filtered_mat)
+# }
+
+remove_high_corr_genes <- function(expr_mat, cutoff = 0.90) {
+  # expr_mat: genes x samples
+  if (is.null(expr_mat) || !is.matrix(expr_mat)) return(expr_mat)
+  if (nrow(expr_mat) < 2) return(expr_mat)  # 少于2个基因直接返回
+  
+  cm <- suppressWarnings(cor(t(expr_mat), use = "pairwise.complete.obs"))
+  if (!is.matrix(cm) || ncol(cm) < 2) return(expr_mat)
+  
+  idx <- caret::findCorrelation(cm, cutoff = cutoff)
+  if (length(idx) == 0) return(expr_mat)
+  
+  expr_mat[-idx, , drop = FALSE]
+}
+

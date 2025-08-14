@@ -165,7 +165,7 @@ clinical_cleaned_39582_imputed <- impute_missing_value(clinical_cleaned = clinic
 col_mean <- mean(clinical_cleaned_39582_imputed$Age_at_Diagnosis, na.rm = TRUE)
 clinical_cleaned_39582_imputed$Age_at_Diagnosis[is.na(clinical_cleaned_39582_imputed$Age_at_Diagnosis)] <- col_mean
 
-md.pattern(df_miss)
+#md.pattern(df_miss)
 
 
 rownames_39582 <- rownames(clinical_cleaned_39582_imputed)
@@ -180,17 +180,428 @@ clinical_cleaned_39582_imputed <- clinical_cleaned_39582_imputed %>%
 
 
 expr_mat=expr_39582_aligned
+
 clinical_df = clinical_cleaned_39582_imputed %>%
   mutate(
     geo_accession = rownames(.)
   )
 
 
+#############################################
+# var_filter <- apply(expr_mat, 1, var)
+# hist(var_filter, breaks = 100, main = "Gene Variance Distribution", xlab = "Variance")
+# abline(v = quantile(var_filter, 0.5), col = "red", lwd = 2, lty = 2)
+# low_var_genes <- expr_mat[var_filter <= quantile(var_filter, 0.25), ]
+# summary(apply(low_var_genes, 1, sd))
+# 
+# # 2) thresholds
+# q10 <- quantile(var_filter, 0.10, na.rm = TRUE)
+# q25 <- quantile(var_filter, 0.25, na.rm = TRUE)
+# 
+# n_genes <- length(var_filter)
+# n_drop10 <- sum(var_filter <= q10)
+# n_drop25 <- sum(var_filter <= q25)
+# 
+# # 3) density plot + lines
+# d <- density(var_filter, na.rm = TRUE)
+# plot(d, main = sprintf("Gene variance density (q10=%.4f; drop=%d/%d, q25=%.4f; drop=%d/%d)",
+#                        q10, n_drop10, n_genes, q25, n_drop25, n_genes),
+#      xlab = "Per-gene variance", ylab = "Density")
+# abline(v = q10, lty = 2)
+# abline(v = q25, lty = 3)
+# text(x = q10, y = max(d$y)*0.9, labels = "10% cutoff", srt = 90, pos = 4, cex = 0.8)
+# text(x = q25, y = max(d$y)*0.8, labels = "25% cutoff", srt = 90, pos = 4, cex = 0.8)
+# 
+# 
+# 
+# expr_mat <- expr_mat[var_filter > quantile(var_filter, 0.25), ]
+# 
+# 
+
+
+
+
+
+
+
+
+# 
+# run_bootstrap_validation_safe <- function(expr_mat, clinical_df, 
+#                                           B = 10, 
+#                                           #max_vars = 30, 
+#                                           seed = 90000,
+#                                           min_epv = 2.5, 
+#                                           coef_max = 10,
+#                                           min_concord = 0.98) {
+#   
+#   n <- ncol(expr_mat)
+#   perf_list <- list()
+#   gene_list <- list()
+#   rsf_predictor_list <- list()
+#   
+#   # 保存最优模型信息
+#   best_model <- NULL
+#   best_perf  <- -Inf
+#   best_genes <- NULL
+#   best_iter <- NULL
+#   best_method <- NULL
+#   train_indices_list <- list()
+#   
+#   for (b in 1:B) {
+#     
+#     # Bootstrap 抽样
+#     current_seed <- seed + b 
+#     set.seed(current_seed) 
+#     message(sprintf("Bootstrap %d: seed = %d", b, seed + b))
+#     
+#     train_idx <- sample(seq_len(n), size = n, replace = TRUE)
+#     test_idx  <- setdiff(seq_len(n), unique(train_idx))  # OOB 样本
+#     
+#     train_indices_list[[b]] <- train_idx
+#     
+#     if (length(test_idx) == 0) next
+#     
+#     train_expr     <- expr_mat[, train_idx]
+#     test_expr      <- expr_mat[, test_idx]
+#     train_clinical <- clinical_df[train_idx, ]
+#     test_clinical  <- clinical_df[test_idx, ]
+#     
+#     # 事件数
+#     events_train <- sum(train_clinical$e_dmfs)
+#     message(sprintf("Bootstrap %d: Number of events in training set = %d", b, events_train))
+#     
+#     # Median Absolute Deviation more robust than variance
+#     mad_train_expr <- apply(train_expr, 1, mad)
+#     cutoff <- quantile(mad_train_expr, 0.25)
+#     #plot(density(mad_train_expr))
+#     #abline(v = cutoff, col = "red", lty = 2)
+#     
+#     #hist(mad_train_expr, breaks = 50, main = "MAD Distribution",
+#     #     xlab = "MAD", col = "lightblue", border = "white")
+#     #abline(v = cutoff, col = "red", lwd = 2, lty = 2)
+#     
+#     keep_mad <- mad_train_expr > cutoff      # 过滤底部 20%（可调 10–30%）
+#     # Filter the expression matrix
+#     train_expr2 <- train_expr[keep_mad, ]
+#     test_expr2 <- test_expr[keep_mad,]
+#     
+#     
+#     
+#     # Step 1: 单变量 Cox
+#     sig_gene_df <- batch_univariate_cox_regression(train_expr2, train_clinical, p_value = 0.01)
+#     # sig_gene_df <- sig_gene_df[sig_gene_df$p.value < 0.05, ]
+#     # if (nrow(sig_gene_df) == 0) next
+#     
+#     #sig_gene_df_39582 <- sig_gene_df
+#     # 
+#     # # 动态设置 p-value 阈值
+#     # p_thresh <- if (events_train < 40) {
+#     #   0.01
+#     # } else {
+#     #   0.05
+#     # }
+#     # 
+#     # sig_gene_df <- sig_gene_df[sig_gene_df$p.value < p_thresh, ]
+#     # if (nrow(sig_gene_df) == 0) {
+#     #   message(sprintf("Bootstrap %d skipped: No genes passed p < %.2f (Events: %d)", b, p_thresh, events_train))
+#     #   next
+#     # }
+#     # 
+#     
+#     
+#     significant_gene = sig_gene_df$gene
+#     
+#     # scale train gene data
+#     train_expr_scaled <- standardize_with_train(gene_mat_train = train_expr2,
+#                                                 gene_mat_valid= train_expr2,
+#                                                 significant_gene = significant_gene)
+#     #dim(train_expr_scaled)
+#     train_expr_filtered <- remove_high_corr_genes(train_expr_scaled, cutoff = 0.90)
+#     #dim(train_expr_filtered)  # check new dimensions
+#    
+#     significant_gene2 = rownames(train_expr_filtered)
+#     # scale test data
+#     test_expr_scaled <- standardize_with_train(gene_mat_train = train_expr2,
+#                                                gene_mat_valid= test_expr2,
+#                                                significant_gene = significant_gene2)
+#     
+#     
+#     # scale train clinical data
+#     train_clinical_scaled <- standardize_with_train_clinical(train_clinical,
+#                                                              train_clinical,
+#                                                              scale_cols = c("Age_at_Diagnosis"))
+#     
+#     
+#     # scale test data
+#     test_clinical_scaled <- standardize_with_train_clinical(train_clinical,
+#                                                             test_clinical,
+#                                                             scale_cols = c("Age_at_Diagnosis"))
+#     
+#     # Step 2: LASSO Cox
+#     #selected_gene_df <- lasso_cox_cv(train_expr_filtered, train_clinical, sig_genes = significant_gene2)
+#     
+#     gene_freq_df <- repeat_cv_lasso_cox(train_expr = train_expr_filtered,
+#                                          train_clinical,
+#                                          significant_gene_vec= significant_gene2,
+#                                          repeats = 5,
+#                                          nfolds = 10,
+#                                          alpha = 1)
+#     
+#     
+#     #############################
+#     # Step: 动态筛选变量，满足 EPV 要求
+#     gene_freq_df_best <- gene_freq_df %>%
+#       filter(freq >= 0.8)
+#     
+#     max_vars_allowed <- floor(events_train / min_epv)
+#     
+#     if (max_vars_allowed == 0 || nrow(gene_freq_df) == 0) {
+#       message(sprintf("Bootstrap %d skipped: Too few events or no selected genes", b))
+#       next
+#     }
+#     
+#     # 限制变量数量（最多 max_vars_allowed 个）
+#     
+#     selected_gene_df <- gene_freq_df[1:min(nrow(gene_freq_df_best), max_vars_allowed), ] %>%
+#       mutate(coef = mean_coef)
+#     
+#     # 打印信息
+#     message(sprintf("Bootstrap %d: Events = %d, Vars = %d, EPV = %.2f", 
+#                     b, events_train, nrow(selected_gene_df), events_train / nrow(selected_gene_df)))
+#     
+#     
+#     
+#     # Step 3: 风险分数
+#     clinical_cleaned_risk_train <- compute_risk_score(
+#       gene_mat_scaled = train_expr_filtered,
+#       significant_vars_df = selected_gene_df,
+#       clinical_cleaned = train_clinical_scaled,
+#       n_group = 3
+#     )
+#     
+#     predictors0 <- c("Sex", "Age_at_Diagnosis", "TNM_T", "TNM_N", "TNM_M", "Tumor_Location",
+#                      "Chemotherapy_Adjuvant", "MMR_Status",
+#                      "KRAS_Mutation")
+#     #    "grade", "er", "age", "size"
+#     
+#     predictors  <- c(predictors0, colnames(clinical_cleaned_risk_train)[15:ncol(clinical_cleaned_risk_train)])
+#     
+#     # 相关性过滤
+#     predictor_data <- clinical_cleaned_risk_train[, predictors]
+#     numeric_vars <- predictor_data[, sapply(predictor_data, is.numeric), drop = FALSE]
+#     
+#     filtered_numeric_vars <- remove_high_corr(numeric_vars, threshold = 0.9)
+#     
+#     filtered_data <- cbind(
+#       predictor_data[, !sapply(predictor_data, is.numeric), drop = FALSE],
+#       filtered_numeric_vars
+#     )
+#     
+#     predictors_filtered <- colnames(filtered_data)
+#     df <- cbind(filtered_data, clinical_cleaned_risk_train[, c("t_dmfs", "e_dmfs")])
+#     
+#     # 拟合模型
+#     results_train <- fit_cox_model(predictors_filtered, df)
+#     
+#     if (is.null(results_train$model)) {
+#       message(sprintf("Bootstrap %d skipped, Cox model is null ", as.integer(b)))
+#       next
+#     }
+#     
+#     
+#     # 发散检测
+#     if (any(abs(coef(results_train$model)) > coef_max)) {
+#       message(sprintf("Bootstrap %d skipped: coef > %0.1f detected", as.integer(b), coef_max))
+#       next
+#     }
+#     
+#     # 检查完全分离
+#     concordance_val <- tryCatch({
+#       suppressWarnings(summary(results_train$model)$concordance[1])
+#     }, error = function(e) NA)
+#     if (!is.na(concordance_val) && concordance_val >= min_concord) {
+#       message(
+#         sprintf("Bootstrap %d skipped, Concordance >= %f detected ", as.integer(b), min_concord))
+#       next
+#     }
+#     
+#     # Step 4: 测试集评估
+#     clinical_cleaned_risk_test <- compute_risk_score(
+#       gene_mat_scaled = test_expr_scaled,
+#       significant_vars_df = selected_gene_df,
+#       clinical_cleaned = test_clinical_scaled,
+#       n_group = 3
+#     )
+#     
+#     result_valid <- calculate_time_auc_cindex(
+#       "Cox", 
+#       fitted_model = results_train$model, 
+#       df = clinical_cleaned_risk_test
+#     )
+#     
+#     # perf_list[[b]] <- result_valid
+#     # gene_list[[b]] <- selected_gene_df$gene
+#     # 
+#     # # 保存最优模型
+#     # if (!is.na(result_valid$iAUC) && result_valid$iAUC > best_perf) {
+#     #   best_perf  <- result_valid$iAUC
+#     #   best_model <- results_train$model
+#     #   best_genes <- selected_gene_df$gene
+#     # }
+#     
+#     #
+#     # random forest
+#     clinical_rsf <- df
+#     
+#     # build RSF model
+#     result_rsf_train <- rsf_kfold_cv_best(data = clinical_rsf, K = 5, ntree = 1000) #, seed = current_seed
+#     # Best model
+#     rsf_fit_best <- result_rsf_train$best_model
+#     
+#     #Remove variables with negative/less importance from the predictors vector based on RSF model output
+#     # imp <- result_rsf_train$importance
+#     # vars_to_remove <- names(imp)[imp < 0.01]
+#     # predictors_filtered_rsf <- setdiff(predictors_filtered, vars_to_remove)
+#     # 
+#     # clinical_rsf <- df[, c("t_dmfs", "e_dmfs", predictors_filtered_rsf)]
+#     # # build RSF model with predictors_filtered_rsf
+#     # result_rsf_train <- rsf_kfold_cv_best(clinical_rsf, K = 5, ntree = 1000) #, seed = current_seed
+#     # # Best model
+#     # rsf_fit_best <- result_rsf_train$best_model
+#     result_rsf_valid <- calculate_time_auc_cindex("RSF", fitted_model = rsf_fit_best, df = clinical_cleaned_risk_test)
+#     
+#     
+#     # 把 Cox + RSF 一起保存
+#     perf_list[[b]] <- list(
+#       cox  = result_valid,
+#       rsf  = result_rsf_valid
+#     )
+#     
+#     # 保存基因
+#     gene_list[[b]] <- selected_gene_df$gene
+#     rsf_predictor_list[[b]] <- predictors_filtered#predictors_filtered_rsf
+#     
+#     
+#     # 当前 Cox 和 RSF 的综合评分（iAUC + C-index）
+#     cox_score <- if (!is.na(result_valid$iAUC) && !is.na(result_valid$c_index)) {
+#       result_valid$iAUC + result_valid$c_index
+#     } else {
+#       -Inf
+#     }
+#     
+#     rsf_score <- if (!is.na(result_rsf_valid$iAUC) && !is.na(result_rsf_valid$c_index)) {
+#       result_rsf_valid$iAUC + result_rsf_valid$c_index
+#     } else {
+#       -Inf
+#     }
+#     cat(sprintf("Cox_score in present iteration %d is %f, in which valid_iAUC is %f and valid_c_index is %f",
+#                 b,
+#                 cox_score,
+#                 result_valid$iAUC,
+#                 result_valid$c_index
+#                 ))
+#     cat(sprintf("rsf_score in present iteration %d is %f, in which valid_iAUC is %f and valid_c_index is %f",
+#                 b,
+#                 rsf_score,
+#                 result_rsf_valid$iAUC,
+#                 result_rsf_valid$c_index))
+#     
+#     
+#     # 判断是否更优（Cox）
+#     if (cox_score > best_perf) {
+#       best_perf    <- cox_score
+#       best_model   <- results_train$model
+#       best_genes   <- selected_gene_df$gene
+#       best_iter    <- b
+#       best_seed    <- current_seed
+#       best_method  <- "Cox"
+#     }
+#     
+#     # 判断是否更优（RSF）
+#     if (rsf_score > best_perf) {
+#       best_perf    <- rsf_score
+#       best_model   <- rsf_fit_best
+#       best_genes   <- predictors_filtered#predictors_filtered_rsf
+#       best_iter    <- b
+#       best_seed    <- current_seed
+#       best_method  <- "RSF"
+#     }
+#     
+#     
+#     cat(sprintf("Best model found in iteration %d using %s model\n", best_iter, best_method))
+#     cat(sprintf("Best iAUC + C-index = %.4f\n", best_perf))
+#   }
+#   
+#   # 汇总
+#  # iAUCs   <- sapply(perf_list, function(x) x$iAUC)
+#   #cindexs <- sapply(perf_list, function(x) x$c_index)
+#   
+#   
+#   
+#   ######################
+#   # 过滤掉为 NULL 的轮次
+#   perf_list_nz <- Filter(Negate(is.null), perf_list)
+#   
+#   # 取 Cox 指标
+#   cox_iAUC  <- sapply(perf_list_nz, function(x)
+#     if (!is.null(x$cox) && !is.null(x$cox$iAUC)) x$cox$iAUC else NA_real_)
+#   cox_cidx  <- sapply(perf_list_nz, function(x)
+#     if (!is.null(x$cox) && !is.null(x$cox$c_index)) x$cox$c_index else NA_real_)
+#   
+#   # 取 RSF 指标
+#   rsf_iAUC  <- sapply(perf_list_nz, function(x)
+#     if (!is.null(x$rsf) && !is.null(x$rsf$iAUC)) x$rsf$iAUC else NA_real_)
+#   rsf_cidx  <- sapply(perf_list_nz, function(x)
+#     if (!is.null(x$rsf) && !is.null(x$rsf$c_index)) x$rsf$c_index else NA_real_)
+#   
+#   # 汇总（去掉 NA）
+#   mean_cox_iAUC <- mean(cox_iAUC, na.rm = TRUE)
+#   mean_cox_cidx <- mean(cox_cidx, na.rm = TRUE)
+#   mean_rsf_iAUC <- mean(rsf_iAUC, na.rm = TRUE)
+#   mean_rsf_cidx <- mean(rsf_cidx, na.rm = TRUE)
+#   
+#   
+#   ######################################################
+#   
+#   all_genes <- unlist(gene_list)
+#   gene_freq <- sort(table(all_genes) / B, decreasing = TRUE)
+#   
+#   return (list(
+#     #mean_iAUC   = mean(iAUCs, na.rm = TRUE),
+#     #mean_cindex = mean(cindexs, na.rm = TRUE),
+#     mean_cox_iAUC = mean_cox_iAUC,
+#     mean_cox_cidx = mean_cox_cidx,
+#     mean_rsf_cidx = mean_rsf_cidx,
+#     mean_rsf_iAUC = mean_rsf_iAUC,
+#     gene_frequency = gene_freq,
+#     all_results = perf_list,
+#     best_model  = best_model,   # ⬅ 最优模型对象
+#     best_perf   = best_perf,    # ⬅ 最优 iAUC
+#     best_predictors = best_genes,   # ⬅ 最优模型的基因列表或者RSF预测变量
+#     best_iter = best_iter,
+#     best_seed = best_seed,
+#     best_method = best_method,
+#     train_indices_list = train_indices_list
+#   ))
+# }
+# 
+# 
+# res39582_g <- run_bootstrap_validation_safe(expr_mat,
+#                                       clinical_df, 
+#                                       B = 5,
+#                                       seed = 90000,
+#                                       # max_vars = 20,
+#                                       min_epv = 4,
+#                                       coef_max = 10,
+#                                       min_concord = 0.97) 
+# 
+
+
+
 
 run_bootstrap_validation_safe <- function(expr_mat, clinical_df, 
                                           B = 10, 
-                                          #max_vars = 30, 
-                                          seed = 10000,
+                                          seed = 90000,
                                           min_epv = 2.5, 
                                           coef_max = 10,
                                           min_concord = 0.98) {
@@ -208,253 +619,270 @@ run_bootstrap_validation_safe <- function(expr_mat, clinical_df,
   best_method <- NULL
   train_indices_list <- list()
   
+  message("初始化完成：expr_mat 维度 = ", toString(dim(expr_mat)), 
+          ", clinical_df 维度 = ", toString(dim(clinical_df)))
+  
   for (b in 1:B) {
-    
-    # Bootstrap 抽样
+    # Bootstrap 采样
     current_seed <- seed + b 
     set.seed(current_seed) 
     message(sprintf("Bootstrap %d: seed = %d", b, seed + b))
     
     train_idx <- sample(seq_len(n), size = n, replace = TRUE)
     test_idx  <- setdiff(seq_len(n), unique(train_idx))  # OOB 样本
+    message(sprintf("Bootstrap %d: train_idx length = %d, test_idx length = %d", 
+                    b, length(train_idx), length(test_idx)))
     
-    train_indices_list[[b]] <- train_idx
+    if (length(test_idx) == 0) {
+      message(sprintf("Bootstrap %d skipped: No OOB samples", b))
+      next
+    }
     
-    if (length(test_idx) == 0) next
+    train_expr     <- expr_mat[, train_idx, drop = FALSE]
+    test_expr      <- expr_mat[, test_idx, drop = FALSE]
+    train_clinical <- clinical_df[train_idx, , drop = FALSE]
+    test_clinical  <- clinical_df[test_idx, , drop = FALSE]
     
-    train_expr     <- expr_mat[, train_idx]
-    test_expr      <- expr_mat[, test_idx]
-    train_clinical <- clinical_df[train_idx, ]
-    test_clinical  <- clinical_df[test_idx, ]
+    message("Bootstrap 采样完成：train_expr 维度 = ", toString(dim(train_expr)), 
+            ", test_expr 维度 = ", toString(dim(test_expr)),
+            ", train_clinical 维度 = ", toString(dim(train_clinical)),
+            ", test_clinical 维度 = ", toString(dim(test_clinical)))
+    
+    if (ncol(train_expr) == 0 || nrow(train_expr) == 0) {
+      message(sprintf("Bootstrap %d skipped: Invalid train_expr dimensions", b))
+      next
+    }
     
     # 事件数
     events_train <- sum(train_clinical$e_dmfs)
     message(sprintf("Bootstrap %d: Number of events in training set = %d", b, events_train))
+    message("事件数计算完成")
     
-    # Step 1: 单变量 Cox
-    sig_gene_df <- batch_univariate_cox_regression(train_expr, train_clinical)
-    # sig_gene_df <- sig_gene_df[sig_gene_df$p.value < 0.05, ]
-    # if (nrow(sig_gene_df) == 0) next
+    # MAD 过滤
+    mad_train_expr <- apply(train_expr, 1, mad)
+    cutoff <- quantile(mad_train_expr, 0.25)
+    keep_mad <- mad_train_expr > cutoff
+    message(sprintf("Bootstrap %d: MAD 过滤完成，保留基因数 = %d, cutoff = %.4f", 
+                    b, sum(keep_mad), cutoff))
     
-    #sig_gene_df_39582 <- sig_gene_df
-    
-    # 动态设置 p-value 阈值
-    p_thresh <- if (events_train < 40) {
-      0.01
-    } else {
-      0.05
-    }
-    
-    sig_gene_df <- sig_gene_df[sig_gene_df$p.value < p_thresh, ]
-    if (nrow(sig_gene_df) == 0) {
-      message(sprintf("Bootstrap %d skipped: No genes passed p < %.2f (Events: %d)", b, p_thresh, events_train))
+    if (sum(keep_mad) == 0) {
+      message(sprintf("Bootstrap %d skipped: No genes passed MAD filter", b))
       next
     }
     
+    train_expr2 <- train_expr[keep_mad, , drop = FALSE]
+    test_expr2 <- test_expr[keep_mad, , drop = FALSE]
+    message("MAD 过滤后矩阵生成完成：train_expr2 维度 = ", toString(dim(train_expr2)), 
+            ", test_expr2 维度 = ", toString(dim(test_expr2)))
     
+    # 单变量 Cox 回归
+    sig_gene_df <- batch_univariate_cox_regression(train_expr2, train_clinical, p_value = 0.01)
+    message(sprintf("Bootstrap %d: 单变量 Cox 回归完成，显著基因数 = %d", 
+                    b, if (is.null(sig_gene_df)) 0 else nrow(sig_gene_df)))
     
+    if (is.null(sig_gene_df) || nrow(sig_gene_df) == 0) {
+      message(sprintf("Bootstrap %d skipped: No significant genes from univariate Cox", b))
+      next
+    }
     
-    significant_gene = sig_gene_df$gene
+    significant_gene <- sig_gene_df$gene
+    message(sprintf("Bootstrap %d: 提取显著基因完成，significant_gene 长度 = %d", 
+                    b, length(significant_gene)))
     
-    # scale train gene data
-    train_expr_scaled <- standardize_with_train(gene_mat_train = train_expr,
-                                                gene_mat_valid= train_expr,
+    if (length(significant_gene) < 2) {
+      message(sprintf("Bootstrap %d skipped: significant genes < 2", b))
+      next
+    }
+    
+    # 标准化训练集基因数据
+    train_expr_scaled <- standardize_with_train(gene_mat_train = train_expr2,
+                                                gene_mat_valid = train_expr2,
                                                 significant_gene = significant_gene)
+    message("标准化训练集基因数据完成：train_expr_scaled 维度 = ", 
+            toString(dim(train_expr_scaled)))
     
-    # scale test data
-    test_expr_scaled <- standardize_with_train(gene_mat_train = train_expr,
-                                               gene_mat_valid= test_expr,
-                                               significant_gene = significant_gene)
+    if (is.null(train_expr_scaled) || nrow(train_expr_scaled) == 0) {
+      message(sprintf("Bootstrap %d skipped: Invalid standardized training data", b))
+      next
+    }
     
+    if (nrow(train_expr_scaled) < 2) {
+      message(sprintf("Bootstrap %d skipped: nrow(train_expr_scaled) < 2", b))
+      next
+    }
     
-    # scale train clinical data
+    # 相关性过滤
+    train_expr_filtered <- remove_high_corr_genes(train_expr_scaled, cutoff = 0.90)
+    message("相关性过滤完成：train_expr_filtered 维度 = ", 
+            toString(dim(train_expr_filtered)))
+    
+    if (is.null(train_expr_filtered) || nrow(train_expr_filtered) < 2) {
+      message(sprintf("Bootstrap %d skipped: No genes after correlation filtering", b))
+      next
+    }
+    
+    significant_gene2 <- rownames(train_expr_filtered)
+    message(sprintf("Bootstrap %d: 提取过滤后基因完成，significant_gene2 长度 = %d", 
+                    b, length(significant_gene2)))
+    
+    # 标准化测试集基因数据
+    test_expr_scaled <- standardize_with_train(gene_mat_train = train_expr2,
+                                               gene_mat_valid = test_expr2,
+                                               significant_gene = significant_gene2)
+    message("标准化测试集基因数据完成：test_expr_scaled 维度 = ", 
+            toString(dim(test_expr_scaled)))
+    
+    # 标准化训练集临床数据
     train_clinical_scaled <- standardize_with_train_clinical(train_clinical,
                                                              train_clinical,
                                                              scale_cols = c("Age_at_Diagnosis"))
+    message("标准化训练集临床数据完成：train_clinical_scaled 维度 = ", 
+            toString(dim(train_clinical_scaled)))
     
-    
-    # scale test data
+    # 标准化测试集临床数据
     test_clinical_scaled <- standardize_with_train_clinical(train_clinical,
                                                             test_clinical,
                                                             scale_cols = c("Age_at_Diagnosis"))
+    message("标准化测试集临床数据完成：test_clinical_scaled 维度 = ", 
+            toString(dim(test_clinical_scaled)))
     
-    # Step 2: LASSO Cox
-    selected_gene_df <- lasso_cox_cv(train_expr_scaled, train_clinical, sig_gene_df)
+    # LASSO Cox
+    gene_freq_df <- repeat_cv_lasso_cox(train_expr = train_expr_filtered,
+                                        train_clinical,
+                                        significant_gene_vec = significant_gene2,
+                                        repeats = 5,
+                                        nfolds = 10,
+                                        alpha = 1)
+    message(sprintf("Bootstrap %d: LASSO Cox 完成，gene_freq_df 行数 = %d", 
+                    b, nrow(gene_freq_df)))
     
-    # 限制变量数
-    # if (nrow(selected_gene_df) > max_vars) {
-    #   selected_gene_df <- selected_gene_df[order(abs(selected_gene_df$coef), decreasing = TRUE), ]
-    #   selected_gene_df <- selected_gene_df[1:max_vars, ]
-    # }
-    #############################
-    # # 动态限制变量数：最多不超过 events_train / min_epv
-    # max_vars_allowed <- floor(events_train / min_epv)
-    # if (nrow(selected_gene_df) > max_vars_allowed) {
-    #   selected_gene_df <- selected_gene_df[order(abs(selected_gene_df$coef), decreasing = TRUE), ]
-    #   selected_gene_df <- selected_gene_df[1:max_vars_allowed, ]
-    # }
-    # 
-    # 
-    # # EPV 检查
-    # message(sprintf("Bootstrap %d: Events = %d, Vars = %d, EPV = %.2f", 
-    #                 b, events_train, nrow(selected_gene_df), events_train / nrow(selected_gene_df)))
-    # 
-    # if (events_train / nrow(selected_gene_df) < min_epv) {
-    #   message(sprintf("Bootstrap %d skipped: EPV too low (%0.2f)", b, events_train / nrow(selected_gene_df)))
-    #   next
-    # }
-    #############################
-    # Step: 动态筛选变量，满足 EPV 要求
+    # 动态筛选变量，满足 EPV 要求
+    gene_freq_df_best <- gene_freq_df %>%
+      filter(freq >= 0.8)
     max_vars_allowed <- floor(events_train / min_epv)
+    message(sprintf("Bootstrap %d: 动态筛选变量完成，gene_freq_df_best 行数 = %d, max_vars_allowed = %d", 
+                    b, nrow(gene_freq_df_best), max_vars_allowed))
     
-    if (max_vars_allowed == 0 || nrow(selected_gene_df) == 0) {
+    if (max_vars_allowed == 0 || nrow(gene_freq_df) == 0) {
       message(sprintf("Bootstrap %d skipped: Too few events or no selected genes", b))
       next
     }
     
-    # 限制变量数量（最多 max_vars_allowed 个）
-    selected_gene_df <- selected_gene_df[order(abs(selected_gene_df$coef), decreasing = TRUE), ]
-    selected_gene_df <- selected_gene_df[1:min(nrow(selected_gene_df), max_vars_allowed), ]
+    selected_gene_df <- gene_freq_df[1:min(nrow(gene_freq_df_best), max_vars_allowed), ] %>%
+      mutate(coef = mean_coef)
+    message(sprintf("Bootstrap %d: 选择基因完成，selected_gene_df 行数 = %d, EPV = %.2f", 
+                    b, nrow(selected_gene_df), events_train / nrow(selected_gene_df)))
     
-    # 打印信息
-    message(sprintf("Bootstrap %d: Events = %d, Vars = %d, EPV = %.2f", 
-                    b, events_train, nrow(selected_gene_df), events_train / nrow(selected_gene_df)))
-    
-    
-    
-    # Step 3: 风险分数
+    # 计算风险分数
     clinical_cleaned_risk_train <- compute_risk_score(
-      gene_mat_scaled = train_expr_scaled,
+      gene_mat_scaled = train_expr_filtered,
       significant_vars_df = selected_gene_df,
       clinical_cleaned = train_clinical_scaled,
       n_group = 3
     )
+    message("训练集风险分数计算完成：clinical_cleaned_risk_train 维度 = ", 
+            toString(dim(clinical_cleaned_risk_train)))
     
     predictors0 <- c("Sex", "Age_at_Diagnosis", "TNM_T", "TNM_N", "TNM_M", "Tumor_Location",
-                     "Chemotherapy_Adjuvant", "MMR_Status",
-                     "KRAS_Mutation")
-    #    "grade", "er", "age", "size"
-    
-    predictors  <- c(predictors0, colnames(clinical_cleaned_risk_train)[15:ncol(clinical_cleaned_risk_train)])
+                     "Chemotherapy_Adjuvant", "MMR_Status", "KRAS_Mutation")
+    predictors <- c(predictors0, colnames(clinical_cleaned_risk_train)[15:ncol(clinical_cleaned_risk_train)])
+    message(sprintf("Bootstrap %d: 预测变量选择完成，predictors 长度 = %d", 
+                    b, length(predictors)))
     
     # 相关性过滤
     predictor_data <- clinical_cleaned_risk_train[, predictors]
     numeric_vars <- predictor_data[, sapply(predictor_data, is.numeric), drop = FALSE]
-    filtered_numeric_vars <- remove_high_corr(numeric_vars, threshold = 0.85)
+    filtered_numeric_vars <- remove_high_corr(numeric_vars, threshold = 0.9)
     filtered_data <- cbind(
       predictor_data[, !sapply(predictor_data, is.numeric), drop = FALSE],
       filtered_numeric_vars
     )
-    
     predictors_filtered <- colnames(filtered_data)
     df <- cbind(filtered_data, clinical_cleaned_risk_train[, c("t_dmfs", "e_dmfs")])
+    message("预测变量相关性过滤完成：filtered_data 维度 = ", toString(dim(filtered_data)))
     
-    # 拟合模型
+    # 拟合 Cox 模型
     results_train <- fit_cox_model(predictors_filtered, df)
+    message(sprintf("Bootstrap %d: Cox 模型拟合完成，model 是否存在 = %s", 
+                    b, !is.null(results_train$model)))
     
     if (is.null(results_train$model)) {
       message(sprintf("Bootstrap %d skipped, Cox model is null ", as.integer(b)))
       next
     }
     
-    
     # 发散检测
     if (any(abs(coef(results_train$model)) > coef_max)) {
       message(sprintf("Bootstrap %d skipped: coef > %0.1f detected", as.integer(b), coef_max))
       next
     }
+    message("Cox 模型发散检测完成")
     
     # 检查完全分离
     concordance_val <- tryCatch({
       suppressWarnings(summary(results_train$model)$concordance[1])
     }, error = function(e) NA)
+    message(sprintf("Bootstrap %d: 完全分离检查完成，concordance_val = %.4f", 
+                    b, if (is.na(concordance_val)) NA else concordance_val))
+    
     if (!is.na(concordance_val) && concordance_val >= min_concord) {
-      message(
-        sprintf("Bootstrap %d skipped, Concordance >= %f detected ", as.integer(b), min_concord))
+      message(sprintf("Bootstrap %d skipped, Concordance >= %f detected ", as.integer(b), min_concord))
       next
     }
     
-    # Step 4: 测试集评估
+    # 测试集风险分数
     clinical_cleaned_risk_test <- compute_risk_score(
       gene_mat_scaled = test_expr_scaled,
       significant_vars_df = selected_gene_df,
       clinical_cleaned = test_clinical_scaled,
       n_group = 3
     )
+    message("测试集风险分数计算完成：clinical_cleaned_risk_test 维度 = ", 
+            toString(dim(clinical_cleaned_risk_test)))
     
+    # Cox 模型评估
     result_valid <- calculate_time_auc_cindex(
       "Cox", 
       fitted_model = results_train$model, 
       df = clinical_cleaned_risk_test
     )
+    message(sprintf("Bootstrap %d: Cox 模型评估完成，iAUC = %.4f, c_index = %.4f", 
+                    b, result_valid$iAUC, result_valid$c_index))
     
-    # perf_list[[b]] <- result_valid
-    # gene_list[[b]] <- selected_gene_df$gene
-    # 
-    # # 保存最优模型
-    # if (!is.na(result_valid$iAUC) && result_valid$iAUC > best_perf) {
-    #   best_perf  <- result_valid$iAUC
-    #   best_model <- results_train$model
-    #   best_genes <- selected_gene_df$gene
-    # }
-    
-    #
-    # random forest
+    # Random Survival Forest
     clinical_rsf <- df
-    
-    # build RSF model
-    result_rsf_train <- rsf_kfold_cv_best(clinical_rsf, K = 5, ntree = 1000, seed = current_seed)
-    # Best model
+    result_rsf_train <- rsf_kfold_cv_best(data = clinical_rsf, K = 5, ntree = 1000)
     rsf_fit_best <- result_rsf_train$best_model
+    message("RSF 模型拟合完成")
     
-    #Remove variables with negative/less importance from the predictors vector based on RSF model output
-    imp <- result_rsf_train$importance
-    vars_to_remove <- names(imp)[imp < 0.01]
-    predictors_filtered_rsf <- setdiff(predictors_filtered, vars_to_remove)
-    
-    clinical_rsf <- df[, c("t_dmfs", "e_dmfs", predictors_filtered_rsf)]
-    # build RSF model with predictors_filtered_rsf
-    result_rsf_train <- rsf_kfold_cv_best(clinical_rsf, K = 5, ntree = 1000, seed = current_seed)
-    # Best model
-    rsf_fit_best <- result_rsf_train$best_model
     result_rsf_valid <- calculate_time_auc_cindex("RSF", fitted_model = rsf_fit_best, df = clinical_cleaned_risk_test)
+    message(sprintf("Bootstrap %d: RSF 模型评估完成，iAUC = %.4f, c_index = %.4f", 
+                    b, result_rsf_valid$iAUC, result_rsf_valid$c_index))
     
-    
-    # 把 Cox + RSF 一起保存
+    # 保存性能和基因
     perf_list[[b]] <- list(
-      cox  = result_valid,
-      rsf  = result_rsf_valid
+      cox = result_valid,
+      rsf = result_rsf_valid
     )
-    
-    # 保存基因
     gene_list[[b]] <- selected_gene_df$gene
-    rsf_predictor_list[[b]] <- predictors_filtered_rsf
+    rsf_predictor_list[[b]] <- predictors_filtered
+    message("性能和基因保存完成")
     
-    
-    # 当前 Cox 和 RSF 的综合评分（iAUC + C-index）
+    # 计算 Cox 和 RSF 综合评分
     cox_score <- if (!is.na(result_valid$iAUC) && !is.na(result_valid$c_index)) {
       result_valid$iAUC + result_valid$c_index
     } else {
       -Inf
     }
-    
     rsf_score <- if (!is.na(result_rsf_valid$iAUC) && !is.na(result_rsf_valid$c_index)) {
       result_rsf_valid$iAUC + result_rsf_valid$c_index
     } else {
       -Inf
     }
-    cat(sprintf("Cox_score in present iteration %d is %f, in which valid_iAUC is %f and valid_c_index is %f",
-                b,
-                cox_score,
-                result_valid$iAUC,
-                result_valid$c_index
-                ))
-    cat(sprintf("rsf_score in present iteration %d is %f, in which valid_iAUC is %f and valid_c_index is %f",
-                b,
-                rsf_score,
-                result_rsf_valid$iAUC,
-                result_rsf_valid$c_index))
-    
+    cat(sprintf("Cox_score in present iteration %d is %f, in which valid_iAUC is %f and valid_c_index is %f\n",
+                b, cox_score, result_valid$iAUC, result_valid$c_index))
+    cat(sprintf("rsf_score in present iteration %d is %f, in which valid_iAUC is %f and valid_c_index is %f\n",
+                b, rsf_score, result_rsf_valid$iAUC, result_rsf_valid$c_index))
     
     # 判断是否更优（Cox）
     if (cox_score > best_perf) {
@@ -470,63 +898,56 @@ run_bootstrap_validation_safe <- function(expr_mat, clinical_df,
     if (rsf_score > best_perf) {
       best_perf    <- rsf_score
       best_model   <- rsf_fit_best
-      best_genes   <- predictors_filtered_rsf
+      best_genes   <- predictors_filtered
       best_iter    <- b
       best_seed    <- current_seed
       best_method  <- "RSF"
     }
     
-    
     cat(sprintf("Best model found in iteration %d using %s model\n", best_iter, best_method))
     cat(sprintf("Best iAUC + C-index = %.4f\n", best_perf))
+    message(sprintf("Bootstrap %d: 迭代完成", b))
   }
   
+  message("所有 Bootstrap 迭代完成")
+  
   # 汇总
- # iAUCs   <- sapply(perf_list, function(x) x$iAUC)
-  #cindexs <- sapply(perf_list, function(x) x$c_index)
-  
-  
-  
-  ######################
-  # 过滤掉为 NULL 的轮次
   perf_list_nz <- Filter(Negate(is.null), perf_list)
   
-  # 取 Cox 指标
-  cox_iAUC  <- sapply(perf_list_nz, function(x)
+  cox_iAUC <- sapply(perf_list_nz, function(x)
     if (!is.null(x$cox) && !is.null(x$cox$iAUC)) x$cox$iAUC else NA_real_)
-  cox_cidx  <- sapply(perf_list_nz, function(x)
+  cox_cidx <- sapply(perf_list_nz, function(x)
     if (!is.null(x$cox) && !is.null(x$cox$c_index)) x$cox$c_index else NA_real_)
   
-  # 取 RSF 指标
-  rsf_iAUC  <- sapply(perf_list_nz, function(x)
+  rsf_iAUC <- sapply(perf_list_nz, function(x)
     if (!is.null(x$rsf) && !is.null(x$rsf$iAUC)) x$rsf$iAUC else NA_real_)
-  rsf_cidx  <- sapply(perf_list_nz, function(x)
+  rsf_cidx <- sapply(perf_list_nz, function(x)
     if (!is.null(x$rsf) && !is.null(x$rsf$c_index)) x$rsf$c_index else NA_real_)
   
-  # 汇总（去掉 NA）
   mean_cox_iAUC <- mean(cox_iAUC, na.rm = TRUE)
   mean_cox_cidx <- mean(cox_cidx, na.rm = TRUE)
   mean_rsf_iAUC <- mean(rsf_iAUC, na.rm = TRUE)
   mean_rsf_cidx <- mean(rsf_cidx, na.rm = TRUE)
   
-  
-  ######################################################
+  message("性能指标汇总完成：mean_cox_iAUC = ", mean_cox_iAUC, 
+          ", mean_cox_cidx = ", mean_cox_cidx,
+          ", mean_rsf_iAUC = ", mean_rsf_iAUC,
+          ", mean_rsf_cidx = ", mean_rsf_cidx)
   
   all_genes <- unlist(gene_list)
   gene_freq <- sort(table(all_genes) / B, decreasing = TRUE)
+  message("基因频率计算完成")
   
-  return (list(
-    #mean_iAUC   = mean(iAUCs, na.rm = TRUE),
-    #mean_cindex = mean(cindexs, na.rm = TRUE),
+  return(list(
     mean_cox_iAUC = mean_cox_iAUC,
     mean_cox_cidx = mean_cox_cidx,
     mean_rsf_cidx = mean_rsf_cidx,
     mean_rsf_iAUC = mean_rsf_iAUC,
     gene_frequency = gene_freq,
     all_results = perf_list,
-    best_model  = best_model,   # ⬅ 最优模型对象
-    best_perf   = best_perf,    # ⬅ 最优 iAUC
-    best_predictors = best_genes,   # ⬅ 最优模型的基因列表或者RSF预测变量
+    best_model = best_model,
+    best_perf = best_perf,
+    best_predictors = best_genes,
     best_iter = best_iter,
     best_seed = best_seed,
     best_method = best_method,
@@ -535,14 +956,30 @@ run_bootstrap_validation_safe <- function(expr_mat, clinical_df,
 }
 
 
-res39582_f <- run_bootstrap_validation_safe(expr_mat,
-                                      clinical_df, 
-                                      B = 30,
-                                      seed = 80000,
-                                      # max_vars = 20,
-                                      min_epv = 4,
-                                      coef_max = 10,
-                                      min_concord = 0.98) 
+res39582_h <- run_bootstrap_validation_safe(expr_mat, clinical_df, 
+                                            B = 20, 
+                                            seed = 100000, 
+                                            min_epv = 4, 
+                                            coef_max = 10, 
+                                            min_concord = 0.97)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 saveRDS(res39582_c, file = "train_result_39582_d.rds")
 
