@@ -1102,11 +1102,60 @@ gene_freq_df3 <- repeat_cv_lasso_cox(train_expr = train_expr_filtered,
 
 
 
+any(is.na(X))  # 检查NA
+any(is.nan(X)) # 检查NaN
+any(is.infinite(X)) # 检查Inf
+summary(X)
+
+
+
+clinic_repeat_cv_lasso_cox <- function(train_clinical,
+                                #significant_gene_vec= significant_gene2,
+                                repeats = 20,
+                                nfolds = 5,
+                                alpha = 1) {
+  
+  levels(train_clinical$TNM_T)[levels(train_clinical$TNM_T) %in% c("T1", "T2")] <- "T1+T2"
+  #table(train_clinical$TNM_T)  # 验证合并结果：T1+T2, T3, T4
+  
+  X <- train_clinical %>%
+    select(- geo_accession)
+  
+  y <- Surv(train_clinical$t_dmfs, train_clinical$e_dmfs)
+  
+  var_names <- colnames(X)
+  var_counts <- setNames(rep(0, length(var_names)), var_names)
+  var_coef_sum <- setNames(rep(0, length(var_names)), var_names)
+  
+  for (i in 1:repeats) {
+    cvfit <- cv.glmnet(X, y, family = "cox", alpha = alpha, nfolds = nfolds)
+    coef_nonzero <- as.numeric(coef(cvfit, s = "lambda.min"))
+    names(coef_nonzero) <- rownames(coef(cvfit))
+    
+    for (var in var_names) {
+      if (coef_nonzero[var] != 0) {
+        var_counts[var] <- var_counts[var] + 1
+        var_coef_sum[var] <- var_coef_sum[var] + coef_nonzero[var]
+      }
+    }
+  }
+  
+  # 转为数据框，计算频率和平均系数
+  var_freq_df <- data.frame(
+    var = var_names,
+    freq = var_counts / repeats,
+    mean_coef = ifelse(var_counts > 0, var_coef_sum / var_counts, 0)
+  )
+  
+  var_freq_df <- var_freq_df[order(-var_freq_df$freq, -abs(var_freq_df$mean_coef)), ]
+  return(var_freq_df)
+}
 
 
 
 
-cox_rsf_workflow <- function(gene_expr,
+
+cox_rsf_workflow <- function(var_expr,
                          clinical_data_imputed,
                          train_frac,
                          seed,
