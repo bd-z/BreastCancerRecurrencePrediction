@@ -216,6 +216,102 @@ impute_missing_value <- function(clinical_cleaned, selected_col, missed_col) {
   }
   
 
+impute_fit_apply <- function(train_df, test_df, selected_col, missed_col, m = 20) {
+  # 仅选择参与插补的列
+  train_sel <- train_df[, selected_col, drop = FALSE]
+  test_sel  <- test_df[,  selected_col, drop = FALSE]
+  
+  # 绑定并标识来源（便于 mice 回填）
+ # if (is.null(rownames(train_sel)))
+  rownames(train_sel) <- paste0("train_", seq_len(nrow(train_sel)))
+  #if (is.null(rownames(test_sel)))
+  rownames(test_sel)  <- paste0("test_",  seq_len(nrow(test_sel)))
+  df_all <- rbind(train_sel, test_sel)
+  is_test <- grepl("^test_", rownames(df_all))
+  
+  # 指定插补方法（与你原来的规则一致）
+  methods <- make.method(df_all)
+  for (col in missed_col) {
+    if (col %in% c("grade", "TNM_T", "TNM_N")) {
+      methods[col] <- "polr"
+    } else if (col %in% c("er", "TNM_M", "Chemotherapy_Adjuvant", "MMR_Status", "KRAS_Mutation")) {
+      methods[col] <- "logreg"
+    } else {
+      methods[col] <- ""
+    }
+  }
+  
+  # 只用训练行拟合；对测试行仅应用（ignore）
+  imp <- mice(df_all, m = m, method = methods, ignore = is_test, printFlag = FALSE)
+  
+  # 多数票（用于把 m 次插补聚合成一个值）
+  Mode <- function(x) {
+    x <- x[!is.na(x)]
+    if (!length(x)) return(NA)
+    ux <- unique(x)
+    ux[which.max(tabulate(match(x, ux)))]
+  }
+  
+  # 回填 mice 结果（单一值）
+  df_all_imp <- df_all
+  for (col in missed_col) {
+    tbl <- imp$imp[[col]]
+    if (is.null(tbl) || nrow(tbl) == 0) next
+    vals <- apply(tbl, 1, Mode)
+    idx  <- match(names(vals), rownames(df_all_imp))
+    keep <- !is.na(idx) & !is.na(vals)
+    if (!any(keep)) next
+    
+    pos <- idx[keep]
+    if (is.factor(df_all_imp[[col]])) {
+      #lv <- union(levels(df_all_imp[[col]]), as.character(vals[keep]))
+     # df_all_imp[[col]] <- factor(df_all_imp[[col]], levels = lv)
+      df_all_imp[[col]][pos] <- vals[keep]
+    } else if (is.character(df_all_imp[[col]])) {
+      df_all_imp[[col]][pos] <- as.character(vals[keep])
+    } else if (is.numeric(df_all_imp[[col]])) {
+      suppressWarnings({ num_vals <- as.numeric(vals[keep]) })
+      ok <- !is.na(num_vals)
+      df_all_imp[[col]][pos[ok]] <- num_vals[ok]
+    } else {
+      tmp <- as.character(df_all_imp[[col]])
+      tmp[pos] <- as.character(vals[keep])
+      df_all_imp[[col]] <- tmp
+    }
+  }
+  
+  # 拆回训练/测试（仅 selected_col）
+  train_imp <- df_all_imp[!is_test, , drop = FALSE]
+  test_imp  <- df_all_imp[ is_test, , drop = FALSE]
+  
+  # === 训练集驱动的兜底：median/众数 ===
+  for (col in colnames(train_imp)) {
+    x_train <- train_imp[[col]]
+    
+    if (is.numeric(x_train)) {
+      stat <- median(x_train, na.rm = TRUE)
+      if (anyNA(train_imp[[col]])) train_imp[[col]][is.na(train_imp[[col]])] <- stat
+      if (anyNA(test_imp[[col]]))  test_imp[[col]][is.na(test_imp[[col]])]   <- stat
+    } else {
+      stat <- Mode(x_train)
+      # 确保 factor 水平包含众数
+      # if (is.factor(train_imp[[col]])) {
+      #   train_imp[[col]] <- factor(train_imp[[col]], levels = union(levels(train_imp[[col]]), as.character(stat)))
+      #   test_imp[[col]]  <- factor(test_imp[[col]],  levels = union(levels(test_imp[[col]]),  union(levels(train_imp[[col]]), as.character(stat))))
+      # }
+      if (anyNA(train_imp[[col]])) train_imp[[col]][is.na(train_imp[[col]])] <- stat
+      if (anyNA(test_imp[[col]]))  test_imp[[col]][is.na(test_imp[[col]])]   <- stat
+    }
+  }
+  
+  # 回写到原数据框
+  out_train <- train_df
+  out_test  <- test_df
+  out_train[, selected_col] <- train_imp
+  out_test[,  selected_col] <- test_imp
+  
+  list(train = out_train, test = out_test)
+}
 
 
 align_expr_clin <- function(expr, clin, sample_col = 1) {
@@ -633,27 +729,38 @@ fit_cox_model_firth <- function(predictors, df, coef_max = 15) {
 # }
 
 # Function to plot Kaplan-Meier survival curve by a target grouping variable
-plot_km_by_group <- function(df, group_var) {
+km_by_group <- function(df, group_var) {
   # Convert group_var to factor
   df$group_var <- as.factor(df[[group_var]])
   
+  surv_obj <- Surv(time = df$t_dmfs, 
+                   event = df$e_dmfs)
+  
+  
   # Fit survival model
-  fit <- survfit(Surv(t_dmfs, e_dmfs) ~ group_var, data = df)
+  #fit <- survfit(surv_obj ~ group_var, data = df)
   
   # Create survival plot
-  ggsurvplot(
-    fit,
-    data = df,
-    pval = TRUE,
-    conf.int = TRUE,
-    risk.table = TRUE,
-    xlab = "Days",
-    ylab = "Survival Probability",
-    palette = "Set1"
-  )
+  # ggsurvplot(
+  #   fit,
+  #   data = df,
+  #   pval = TRUE,
+  #   conf.int = TRUE,
+  #   risk.table = TRUE,
+  #   xlab = "Days",
+  #   ylab = "Survival Probability",
+  #   palette = "Set1"
+  # )
+  
+  surv_diff <- survdiff(surv_obj ~ group_var, data = df)
+  
+  #print(surv_diff)
+  
+  # 获取p值
+  p_value <- 1 - pchisq(surv_diff$chisq, length(surv_diff$n) - 1)
+  cat("Log-rank Kaplan-Meier test p-value:", p_value, "\n")
+  return(p_value)
 }
-
-
 
 
 calculate_time_auc_cindex <- function(model_type = c("Cox", "RSF"), fitted_model, df) {
@@ -683,18 +790,40 @@ calculate_time_auc_cindex <- function(model_type = c("Cox", "RSF"), fitted_model
     time_points <- seq(min(time_points), max(time_points), length.out = 100)
   }
   
-  # compute time-dependent AUC
-  auc_result <- Score(
-    object = list(model = fitted_model),
-    formula = Surv(t_dmfs, e_dmfs) ~ 1,
-    data = df,
-    metrics = "AUC",
-    summary = "AUC",
-    times = time_points,
-    conf.int = TRUE,
-    plots = TRUE,
-    split.method = "none"  # use external data, no cross-validation
+  # compute time-dependent 
+  # 直接尝试，如果失败则调整时间点
+  try_result <- try(
+    Score(
+      object = list(model = fitted_model),
+      formula = Surv(t_dmfs, e_dmfs) ~ 1,
+      data = df,
+      metrics = "AUC",
+      summary = "AUC",
+      times = time_points,
+      conf.int = FALSE,
+      plots = FALSE,
+      split.method = "none"
+    ),
+    silent = TRUE
   )
+  
+  if (inherits(try_result, "try-error")) {
+    df = df %>% filter(t_dmfs < time_points[length(time_points)])
+    time_points <- time_points[-length(time_points)]
+    auc_result <- Score(
+      object = list(model = fitted_model),
+      formula = Surv(t_dmfs, e_dmfs) ~ 1,
+      data = df,
+      metrics = "AUC",
+      summary = "AUC",
+      times = time_points,
+      conf.int = FALSE,
+      plots = FALSE,
+      split.method = "none"
+    )
+  } else {
+    auc_result <- try_result
+  }
   
   # extract AUC values
   # 提取 AUC 数据框
@@ -849,10 +978,6 @@ standardize_with_train_clinical <- function(train_clinical, test_clinical, scale
   return(test_scaled)
 }
 
-
-
-
-
 compute_risk_score <- function(gene_mat_scaled, significant_vars_df, clinical_cleaned, n_group = 3) {
   # Computes risk scores based on scaled gene expression and model coefficients,
   # and assigns each sample to a risk group (e.g., low, medium, high) based on quantiles.
@@ -872,6 +997,10 @@ compute_risk_score <- function(gene_mat_scaled, significant_vars_df, clinical_cl
   
   genes <- sub("^ge_", "", rownames(significant_vars_df))
   # Keep only the samples in expr_2990_scaled that exist in clinical_cleaned$geo_accession
+  
+  if(!"geo_accession" %in% colnames(clinical_cleaned)) {
+    clinical_cleaned$geo_accession <- rownames(clinical_cleaned)
+  }
   gene_mat_scaled <- gene_mat_scaled[, match(clinical_cleaned$geo_accession, colnames(gene_mat_scaled))]
   gene_mat_scaled <- gene_mat_scaled[genes, ]
   
@@ -898,6 +1027,120 @@ compute_risk_score <- function(gene_mat_scaled, significant_vars_df, clinical_cl
   merged_df <- merge(clinical_cleaned, gene_df, by = "geo_accession", sort = FALSE)
   merged_df
 }
+
+
+
+
+compute_risk_score_train <- function(gene_mat_scaled, significant_vars_df, clinical_cleaned) {
+  # Computes risk scores based on scaled gene expression and model coefficients,
+  # and assigns each sample to a risk group (e.g., low, medium, high) based on quantiles.
+  # 
+  # Arguments:
+  # - gene_mat_scaled: matrix of scaled gene expression values (genes x samples)
+  # - significant_vars_df: data frame with selected gene names (rownames) and coefficients
+  # - clinical_cleaned: data frame with clinical data (samples as rows)
+  # - n_group: number of risk groups to divide samples into (default = 3)
+  #
+  # Returns:
+  # - clinical_cleaned with added columns: 'risk_score', 'risk_group' and gene data
+  
+  # # if risk_score/risk_group column already exists, rename it.
+  # names(clinical_cleaned)[names(clinical_cleaned) == "risk_score"] <- "lasso_risk_score"
+  # names(clinical_cleaned)[names(clinical_cleaned) == "risk_group"] <- "lasso_risk_group"
+  
+  genes <- sub("^ge_", "", rownames(significant_vars_df))
+  # Keep only the samples in expr_2990_scaled that exist in clinical_cleaned$geo_accession
+  
+  if(!"geo_accession" %in% colnames(clinical_cleaned)) {
+    clinical_cleaned$geo_accession <- rownames(clinical_cleaned)
+  }
+  gene_mat_scaled <- gene_mat_scaled[, match(clinical_cleaned$geo_accession, colnames(gene_mat_scaled))]
+  gene_mat_scaled <- gene_mat_scaled[genes, ]
+  
+  if (!identical(rownames(gene_mat_scaled), rownames(significant_vars_df)))
+    stop("Row names are not identical or not in the same order.")
+  
+  clinical_cleaned$risk_score <- as.vector(t(gene_mat_scaled) %*% significant_vars_df$coef)
+  
+  #labels <- paste0("Risk", seq_len(n_group))
+  
+  q33 <- quantile(clinical_cleaned$risk_score, probs = 1/3, na.rm = TRUE)
+  q67 <- quantile(clinical_cleaned$risk_score, probs = 2/3, na.rm = TRUE)
+  
+  clinical_cleaned <- clinical_cleaned %>%
+    mutate(risk_group = case_when(
+      risk_score <= q33 ~ 1,
+      risk_score > q33 & risk_score <= q67 ~ 2, 
+      risk_score > q67 ~ 3,
+      TRUE ~ NA_real_
+    )) %>%
+    mutate(risk_group = factor(risk_group, 
+                               levels = c(1, 2, 3), 
+                               ordered = TRUE))
+  
+   # add gene data
+  gene_mat_scaled_t <- t(gene_mat_scaled)
+  gene_df <- as.data.frame(gene_mat_scaled_t)
+  
+  # Add prefix "ge_" to column names starting with a digit
+  colnames(gene_df)[grepl("^[0-9]", colnames(gene_df))] <- 
+    paste0("ge_", colnames(gene_df)[grepl("^[0-9]", colnames(gene_df))])
+  
+  gene_df$geo_accession <- rownames(gene_df)
+  merged_df <- merge(clinical_cleaned, gene_df, by = "geo_accession", sort = FALSE)
+  return(list(
+    q33 = q33,
+    q67 = q67,
+    merged_df = merged_df
+  ))
+}
+
+
+
+compute_risk_score_test <- function(gene_mat_scaled, significant_vars_df, clinical_cleaned, q33_train, q67_train) {
+  
+  
+  genes <- sub("^ge_", "", rownames(significant_vars_df))
+  
+  if(!"geo_accession" %in% colnames(clinical_cleaned)) {
+    clinical_cleaned$geo_accession <- rownames(clinical_cleaned)
+  }
+  gene_mat_scaled <- gene_mat_scaled[, match(clinical_cleaned$geo_accession, colnames(gene_mat_scaled))]
+  gene_mat_scaled <- gene_mat_scaled[genes, ]
+  
+  if (!identical(rownames(gene_mat_scaled), rownames(significant_vars_df)))
+    stop("Row names are not identical or not in the same order.")
+  
+  clinical_cleaned$risk_score <- as.vector(t(gene_mat_scaled) %*% significant_vars_df$coef)
+  
+  clinical_cleaned <- clinical_cleaned %>%
+    mutate(risk_group = case_when(
+      risk_score <= q33_train ~ 1,
+      risk_score > q33_train & risk_score <= q67_train ~ 2, 
+      risk_score > q67_train ~ 3,
+      TRUE ~ NA_real_
+    )) %>%
+    mutate(risk_group = factor(risk_group, 
+                               levels = c(1, 2, 3), 
+                               ordered = TRUE))
+  
+  # add gene data
+  gene_mat_scaled_t <- t(gene_mat_scaled)
+  gene_df <- as.data.frame(gene_mat_scaled_t)
+  
+  # Add prefix "ge_" to column names starting with a digit
+  colnames(gene_df)[grepl("^[0-9]", colnames(gene_df))] <- 
+    paste0("ge_", colnames(gene_df)[grepl("^[0-9]", colnames(gene_df))])
+  
+  gene_df$geo_accession <- rownames(gene_df)
+  merged_df <- merge(clinical_cleaned, gene_df, by = "geo_accession", sort = FALSE)
+  return(merged_df
+  )
+}
+
+
+
+
 
 
 split_expr_clinical <- function(expr_mat, clinical_df, 
@@ -1091,23 +1334,23 @@ repeat_cv_lasso_cox <- function(train_expr = train_expr_filtered,
 # X 是样本 × 基因 的矩阵
 #gene_freq_df <- repeat_cv_lasso_cox(X, y, repeats = 10, nfolds = 10)
 # head(gene_freq)
-
-gene_freq_df3 <- repeat_cv_lasso_cox(train_expr = train_expr_filtered,
-                                train_clinical,
-                                significant_gene_vec= significant_gene2,
-                                repeats = 2,
-                                nfolds = 10,
-                                alpha = 1)
-
-
-
-
-any(is.na(X))  # 检查NA
-any(is.nan(X)) # 检查NaN
-any(is.infinite(X)) # 检查Inf
-summary(X)
-
-
+# 
+# gene_freq_df3 <- repeat_cv_lasso_cox(train_expr = train_expr_filtered,
+#                                 train_clinical,
+#                                 significant_gene_vec= significant_gene2,
+#                                 repeats = 2,
+#                                 nfolds = 10,
+#                                 alpha = 1)
+# 
+# 
+# 
+# 
+# any(is.na(X))  # 检查NA
+# any(is.nan(X)) # 检查NaN
+# any(is.infinite(X)) # 检查Inf
+# summary(X)
+# 
+# 
 
 clinic_repeat_cv_lasso_cox <- function(train_clinical,
                                 #significant_gene_vec= significant_gene2,
@@ -1299,4 +1542,365 @@ remove_high_corr_genes <- function(expr_mat, cutoff = 0.90) {
   
   expr_mat[-idx, , drop = FALSE]
 }
-
+##### 
+# run_bootstrap_iteration <- function(predictors_filtered,
+#                                     df,
+#                                     b,
+#                                     coef_max,
+#                                     min_concord, 
+#                                     clinical_cleaned_risk_test,
+#                                     selected_gene_df,
+#                                     perf_list,
+#                                     gene_list,
+#                                     rsf_predictor_list,
+#                                     best_perf,
+#                                     best_model,
+#                                     best_genes,
+#                                     best_iter,
+#                                     best_seed,
+#                                     best_method,
+#                                     current_seed) {
+#   
+#   # 拟合 Cox 模型
+#   results_train <- fit_cox_model(predictors_filtered, df)
+#   message(sprintf("Bootstrap %d: Cox 模型拟合完成，model 是否存在 = %s",
+#                   b, !is.null(results_train$model)))
+#   
+#   if (is.null(results_train$model)) {
+#     message(sprintf("Bootstrap %d skipped, Cox model is null ", as.integer(b)))
+#     return(list(perf_list = perf_list, gene_list = gene_list, rsf_predictor_list = rsf_predictor_list,
+#                 best_perf = best_perf, best_model = best_model, best_genes = best_genes,
+#                 best_iter = best_iter, best_seed = best_seed, best_method = best_method))
+#   }
+#   
+#   # 发散检测
+#   if (any(abs(coef(results_train$model)) > coef_max)) {
+#     message(sprintf("Bootstrap %d skipped: coef > %0.1f detected", as.integer(b), coef_max))
+#     return(list(perf_list = perf_list, gene_list = gene_list, rsf_predictor_list = rsf_predictor_list,
+#                 best_perf = best_perf, best_model = best_model, best_genes = best_genes,
+#                 best_iter = best_iter, best_seed = best_seed, best_method = best_method))
+#   }
+#   message("Cox 模型发散检测完成")
+#   
+#   # 检查完全分离
+#   concordance_val <- tryCatch({
+#     suppressWarnings(summary(results_train$model)$concordance[1])
+#   }, error = function(e) NA)
+#   message(sprintf("Bootstrap %d: 完全分离检查完成，concordance_val = %.4f",
+#                   b, if (is.na(concordance_val)) NA else concordance_val))
+#   
+#   if (!is.na(concordance_val) && concordance_val >= min_concord) {
+#     message(sprintf("Bootstrap %d skipped, Concordance >= %f detected ", as.integer(b), min_concord))
+#     return(list(perf_list = perf_list, gene_list = gene_list, rsf_predictor_list = rsf_predictor_list,
+#                 best_perf = best_perf, best_model = best_model, best_genes = best_genes,
+#                 best_iter = best_iter, best_seed = best_seed, best_method = best_method))
+#   }
+#   
+#   # Cox 模型评估
+#   result_valid <- calculate_time_auc_cindex(
+#     "Cox",
+#     fitted_model = results_train$model,
+#     df = clinical_cleaned_risk_test
+#   )
+#   message(sprintf("Bootstrap %d: Cox 模型评估完成，iAUC = %.4f, c_index = %.4f",
+#                   b, result_valid$iAUC, result_valid$c_index))
+#   
+#   # Random Survival Forest
+#   clinical_rsf <- df
+#   result_rsf_train <- rsf_kfold_cv_best(data = clinical_rsf, K = 5, ntree = 1000)
+#   rsf_fit_best <- result_rsf_train$best_model
+#   message("RSF 模型拟合完成")
+#   
+#   result_rsf_valid <- calculate_time_auc_cindex("RSF", fitted_model = rsf_fit_best, df = clinical_cleaned_risk_test)
+#   message(sprintf("Bootstrap %d: RSF 模型评估完成，iAUC = %.4f, c_index = %.4f",
+#                   b, result_rsf_valid$iAUC, result_rsf_valid$c_index))
+#   
+#   # 保存性能和基因
+#   perf_list[[b]] <- list(
+#     cox = result_valid,
+#     rsf = result_rsf_valid
+#   )
+#   gene_list[[b]] <- selected_gene_df$gene
+#   rsf_predictor_list[[b]] <- predictors_filtered
+#   message("性能和基因保存完成")
+#   
+#   # 计算 Cox 和 RSF 综合评分
+#   cox_score <- if (!is.na(result_valid$iAUC) && !is.na(result_valid$c_index)) {
+#     result_valid$iAUC + result_valid$c_index
+#   } else {
+#     -Inf
+#   }
+#   rsf_score <- if (!is.na(result_rsf_valid$iAUC) && !is.na(result_rsf_valid$c_index)) {
+#     result_rsf_valid$iAUC + result_rsf_valid$c_index
+#   } else {
+#     -Inf
+#   }
+#   
+#   cat(sprintf("Cox_score in present iteration %d is %f, in which valid_iAUC is %f and valid_c_index is %f\n",
+#               b, cox_score, result_valid$iAUC, result_valid$c_index))
+#   cat(sprintf("rsf_score in present iteration %d is %f, in which valid_iAUC is %f and valid_c_index is %f\n",
+#               b, rsf_score, result_rsf_valid$iAUC, result_rsf_valid$c_index))
+#   
+#   # 判断是否更优（Cox）
+#   if (cox_score > best_perf) {
+#     best_perf    <- cox_score
+#     best_model   <- results_train$model
+#     best_genes   <- selected_gene_df$gene
+#     best_iter    <- b
+#     best_seed    <- current_seed
+#     best_method  <- "Cox"
+#   }
+#   
+#   # 判断是否更优（RSF）
+#   if (rsf_score > best_perf) {
+#     best_perf    <- rsf_score
+#     best_model   <- rsf_fit_best
+#     best_genes   <- predictors_filtered
+#     best_iter    <- b
+#     best_seed    <- current_seed
+#     best_method  <- "RSF"
+#   }
+#   
+#   cat(sprintf("Best model found in iteration %d using %s model\n", best_iter, best_method))
+#   cat(sprintf("Best iAUC + C-index = %.4f\n", best_perf))
+#   message(sprintf("Bootstrap %d: 迭代完成", b))
+#   
+#   # 返回更新后的所有变量
+#   return(list(
+#     perf_list = perf_list,
+#     gene_list = gene_list,
+#     rsf_predictor_list = rsf_predictor_list,
+#     best_perf = best_perf,
+#     best_model = best_model,
+#     best_genes = best_genes,
+#     best_iter = best_iter,
+#     best_seed = best_seed,
+#     best_method = best_method,
+#     cox_model = results_train$model,
+#     rsf_model = rsf_fit_best,
+#     iteration = b
+#   ))
+# }
+#####
+run_bootstrap_iteration <- function(predictors_filtered,
+                                    df,
+                                    b,
+                                    coef_max,
+                                    min_concord, 
+                                    clinical_cleaned_risk_test,
+                                    selected_gene_df,
+                                    perf_list,
+                                    rsf_predictor_list,
+                                    best_perf,
+                                    best_model,
+                                    best_iter,
+                                    best_seed,
+                                    best_method,
+                                    current_seed) {
+  
+  # 拟合 Cox 模型
+  results_train <- fit_cox_model(predictors_filtered, df)
+  message(sprintf("Bootstrap %d: Cox 模型拟合完成，model 是否存在 = %s",
+                  b, !is.null(results_train$model)))
+  
+  if (is.null(results_train$model)) {
+    message(sprintf("Bootstrap %d skipped, Cox model is null ", as.integer(b)))
+    return(list(perf_list = perf_list, rsf_predictor_list = rsf_predictor_list,
+                best_perf = best_perf, best_model = best_model,
+                best_iter = best_iter, best_seed = best_seed, best_method = best_method))
+  }
+  
+  # 发散检测
+  if (any(abs(coef(results_train$model)) > coef_max)) {
+    message(sprintf("Bootstrap %d skipped: coef > %0.1f detected", as.integer(b), coef_max))
+    return(list(perf_list = perf_list, rsf_predictor_list = rsf_predictor_list,
+                best_perf = best_perf, best_model = best_model,
+                best_iter = best_iter, best_seed = best_seed, best_method = best_method))
+  }
+  message("Cox 模型发散检测完成")
+  
+  # 检查完全分离
+  concordance_val <- tryCatch({
+    suppressWarnings(summary(results_train$model)$concordance[1])
+  }, error = function(e) NA)
+  message(sprintf("Bootstrap %d: 完全分离检查完成，concordance_val = %.4f",
+                  b, if (is.na(concordance_val)) NA else concordance_val))
+  
+  if (!is.na(concordance_val) && concordance_val >= min_concord) {
+    message(sprintf("Bootstrap %d skipped, Concordance >= %f detected ", as.integer(b), min_concord))
+    return(list(perf_list = perf_list, rsf_predictor_list = rsf_predictor_list,
+                best_perf = best_perf, best_model = best_model,
+                best_iter = best_iter, best_seed = best_seed, best_method = best_method))
+  }
+  
+  # Cox 模型评估
+  result_valid <- calculate_time_auc_cindex(
+    "Cox",
+    fitted_model = results_train$model,
+    df = clinical_cleaned_risk_test
+  )
+  message(sprintf("Bootstrap %d: Cox 模型评估完成，iAUC = %.4f, c_index = %.4f",
+                  b, result_valid$iAUC, result_valid$c_index))
+  
+  # Random Survival Forest
+  clinical_rsf <- df
+  result_rsf_train <- rsf_kfold_cv_best(data = clinical_rsf, K = 5, ntree = 1000)
+  rsf_fit_best <- result_rsf_train$best_model
+  message("RSF 模型拟合完成")
+  
+  result_rsf_valid <- calculate_time_auc_cindex("RSF", fitted_model = rsf_fit_best, df = clinical_cleaned_risk_test)
+  message(sprintf("Bootstrap %d: RSF 模型评估完成，iAUC = %.4f, c_index = %.4f",
+                  b, result_rsf_valid$iAUC, result_rsf_valid$c_index))
+  
+  # 保存性能
+  perf_list[[b]] <- list(
+    cox = result_valid,
+    rsf = result_rsf_valid
+  )
+  rsf_predictor_list[[b]] <- predictors_filtered
+  message("性能保存完成")
+  
+  # 计算 Cox 和 RSF 综合评分
+  cox_score <- if (!is.na(result_valid$iAUC) && !is.na(result_valid$c_index)) {
+    result_valid$iAUC + result_valid$c_index
+  } else {
+    -Inf
+  }
+  rsf_score <- if (!is.na(result_rsf_valid$iAUC) && !is.na(result_rsf_valid$c_index)) {
+    result_rsf_valid$iAUC + result_rsf_valid$c_index
+  } else {
+    -Inf
+  }
+  
+  cat(sprintf("Cox_score in present iteration %d is %f, in which valid_iAUC is %f and valid_c_index is %f\n",
+              b, cox_score, result_valid$iAUC, result_valid$c_index))
+  cat(sprintf("rsf_score in present iteration %d is %f, in which valid_iAUC is %f and valid_c_index is %f\n",
+              b, rsf_score, result_rsf_valid$iAUC, result_rsf_valid$c_index))
+  
+  # 判断是否更优（Cox）
+  if (cox_score > best_perf) {
+    best_perf    <- cox_score
+    best_model   <- results_train$model
+    best_iter    <- b
+    best_seed    <- current_seed
+    best_method  <- "Cox"
+  }
+  
+  # 判断是否更优（RSF）
+  if (rsf_score > best_perf) {
+    best_perf    <- rsf_score
+    best_model   <- rsf_fit_best
+    best_iter    <- b
+    best_seed    <- current_seed
+    best_method  <- "RSF"
+  }
+  
+  cat(sprintf("Best model found in iteration %d using %s model\n", best_iter, best_method))
+  cat(sprintf("Best iAUC + C-index = %.4f\n", best_perf))
+  message(sprintf("Bootstrap %d: 迭代完成", b))
+  
+  # 返回更新后的所有变量
+  return(list(
+    perf_list = perf_list,
+    rsf_predictor_list = rsf_predictor_list,
+    best_perf = best_perf,
+    best_model = best_model,
+    best_iter = best_iter,
+    best_seed = best_seed,
+    best_method = best_method,
+    cox_model = results_train$model,
+    rsf_model = rsf_fit_best,
+    iteration = b
+  ))
+}
+#############
+# summarize_performance <- function(perf_list, gene_list, B) {
+#   # 过滤掉NULL值
+#   perf_list_nz <- Filter(Negate(is.null), perf_list)
+#   
+#   # 提取Cox模型的性能指标
+#   cox_iAUC <- sapply(perf_list_nz, function(x)
+#     if (!is.null(x$cox) && !is.null(x$cox$iAUC)) x$cox$iAUC else NA_real_)
+#   cox_cidx <- sapply(perf_list_nz, function(x)
+#     if (!is.null(x$cox) && !is.null(x$cox$c_index)) x$cox$c_index else NA_real_)
+#   
+#   # 提取RSF模型的性能指标
+#   rsf_iAUC <- sapply(perf_list_nz, function(x)
+#     if (!is.null(x$rsf) && !is.null(x$rsf$iAUC)) x$rsf$iAUC else NA_real_)
+#   rsf_cidx <- sapply(perf_list_nz, function(x)
+#     if (!is.null(x$rsf) && !is.null(x$rsf$c_index)) x$rsf$c_index else NA_real_)
+#   
+#   # 计算平均值
+#   mean_cox_iAUC <- mean(cox_iAUC, na.rm = TRUE)
+#   mean_cox_cidx <- mean(cox_cidx, na.rm = TRUE)
+#   mean_rsf_iAUC <- mean(rsf_iAUC, na.rm = TRUE)
+#   mean_rsf_cidx <- mean(rsf_cidx, na.rm = TRUE)
+#   
+#   # 输出汇总信息
+#   message("性能指标汇总完成：mean_cox_iAUC = ", round(mean_cox_iAUC, 4), 
+#           ", mean_cox_cidx = ", round(mean_cox_cidx, 4),
+#           ", mean_rsf_iAUC = ", round(mean_rsf_iAUC, 4),
+#           ", mean_rsf_cidx = ", round(mean_rsf_cidx, 4))
+#   
+#   # 计算基因频率
+#   all_genes <- unlist(gene_list)
+#   gene_freq <- sort(table(all_genes) / B, decreasing = TRUE)
+#   message("基因频率计算完成")
+#   
+#   # 返回汇总结果
+#   return(list(
+#     perf_list_nz = perf_list_nz,
+#     cox_iAUC = cox_iAUC,
+#     cox_cidx = cox_cidx,
+#     rsf_iAUC = rsf_iAUC,
+#     rsf_cidx = rsf_cidx,
+#     mean_cox_iAUC = mean_cox_iAUC,
+#     mean_cox_cidx = mean_cox_cidx,
+#     mean_rsf_iAUC = mean_rsf_iAUC,
+#     mean_rsf_cidx = mean_rsf_cidx,
+#     all_genes = all_genes,
+#     gene_freq = gene_freq
+#   ))
+# }
+###########
+summarize_performance <- function(perf_list, B) {
+  # Filter out NULL values
+  perf_list_nz <- Filter(Negate(is.null), perf_list)
+  
+  # Extract performance metrics for Cox model
+  cox_iAUC <- sapply(perf_list_nz, function(x)
+    if (!is.null(x$cox) && !is.null(x$cox$iAUC)) x$cox$iAUC else NA_real_)
+  cox_cidx <- sapply(perf_list_nz, function(x)
+    if (!is.null(x$cox) && !is.null(x$cox$c_index)) x$cox$c_index else NA_real_)
+  
+  # Extract performance metrics for RSF model
+  rsf_iAUC <- sapply(perf_list_nz, function(x)
+    if (!is.null(x$rsf) && !is.null(x$rsf$iAUC)) x$rsf$iAUC else NA_real_)
+  rsf_cidx <- sapply(perf_list_nz, function(x)
+    if (!is.null(x$rsf) && !is.null(x$rsf$c_index)) x$rsf$c_index else NA_real_)
+  
+  # Calculate mean values
+  mean_cox_iAUC <- mean(cox_iAUC, na.rm = TRUE)
+  mean_cox_cidx <- mean(cox_cidx, na.rm = TRUE)
+  mean_rsf_iAUC <- mean(rsf_iAUC, na.rm = TRUE)
+  mean_rsf_cidx <- mean(rsf_cidx, na.rm = TRUE)
+  
+  # Output summary information
+  message("Performance metrics summary completed: mean_cox_iAUC = ", round(mean_cox_iAUC, 4), 
+          ", mean_cox_cidx = ", round(mean_cox_cidx, 4),
+          ", mean_rsf_iAUC = ", round(mean_rsf_iAUC, 4),
+          ", mean_rsf_cidx = ", round(mean_rsf_cidx, 4))
+  
+  # Return summary results
+  return(list(
+    perf_list_nz = perf_list_nz,
+    cox_iAUC = cox_iAUC,
+    cox_cidx = cox_cidx,
+    rsf_iAUC = rsf_iAUC,
+    rsf_cidx = rsf_cidx,
+    mean_cox_iAUC = mean_cox_iAUC,
+    mean_cox_cidx = mean_cox_cidx,
+    mean_rsf_iAUC = mean_rsf_iAUC,
+    mean_rsf_cidx = mean_rsf_cidx
+  ))
+}
