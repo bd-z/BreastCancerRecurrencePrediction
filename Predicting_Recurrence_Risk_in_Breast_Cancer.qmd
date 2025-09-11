@@ -1,0 +1,678 @@
+---
+title: "Predicting_Recurrence_Risk_in_Breast_Cancer"
+author: "Baodong Zhang"
+editor: visual
+format:
+  pdf:
+    documentclass: article
+    fontsize: 6pt
+echo: true
+warning: false
+message: false
+fig-width: 6
+fig-height: 4
+fig-align: center
+geometry: "top=1in, bottom=1in, left=1in, right=1in"
+header-includes:
+  - \usepackage[table,xcdraw]{xcolor}
+  
+bibliography: references.bib
+---
+
+## Summarize
+
+The object of this project is to build a multivariable survival model that integrates clinical features and selected gene expression profiles to predict long-term recurrence risk in breast cancer patients. Three models have been developed and compared: A clinical-only model; A gene expression-only model; A combined multi-modal model. Performance has been evaluated to explore the potential improvement when combining clinical and genomic features. Under the same variables, a comparison was made between the COX model and the Random Forest survival model. Through 100 bootstrap cross validations with replacement, it was found that the COX model with pure clinic variables achieved the optimal value of 0.61 in terms of average iAUC.In 100 iterations of the COX model with pure clinic variables, the model with the best performance of iAUC+C-index was selected as the final model for future prediction.
+
+## Introduction
+
+In the study of breast cancer, survival analysis has always been a meaningful topic. Identifying the key factors that affect patients' survival time and quality of life is a prerequisite for developing effective treatment methods. This project attempts to use the Cox Lasso model to screen gene expression that affects survival time, and establish a model together with clinical variables to predict the future survival time of patients.
+
+## Data Source
+
+The data for this project were sourced from the internationally renowned NCBI GEO Database (Gene Expression Omnibus) under the accession number GSE7390, which includes a total of 198 breast cancer patients. All patients were lymph node-negative.
+
+Clinical variables include age, tumor grade, estrogen receptor status (ER status),and tumor size.
+
+The gene expression data were obtained using microarray technology and comprise 22,283 variables. The target variables include: Recurrence status: A binary variable indicating whether the patient experienced disease recurrence (yes/no). Time to recurrence: The duration from treatment to the occurrence of disease recurrence, measured in days. For patients who did not experience recurrence, the last known recurrence-free time was recorded (i.e., right-censored data).
+
+```{r}
+#| echo: false
+#| #| warning: false
+library(dplyr)
+library(survival)
+library(survminer)
+library(glmnet)
+library(tibble)
+library(kableExtra)
+expr <- readRDS("expr_7390.RDS")
+clinical <- readRDS("clinical_7390.rds")
+
+
+# 
+subset_tibble <- as_tibble(expr[1:5, 1:5], rownames = "Probe_ID")
+# convert a table into a kable function
+kable_table_func <- function(df, title){
+  kable(df, format = "latex", caption = title) %>%
+  kable_styling(
+    latex_options = c("striped", "hold_position"),
+    full_width = FALSE,
+    position = "center"
+  ) %>%
+  row_spec(0, bold = TRUE, background = "#D3D3D3")
+}
+
+# process clinical data
+clinical$time <- as.numeric(clinical$`t.dmfs:ch1`)
+clinical$status <- as.numeric(clinical$`e.dmfs:ch1`)
+
+clinical_selected <- clinical[, c(
+  "geo_accession",
+  "t.dmfs:ch1", "e.dmfs:ch1",
+  #"t.os:ch1", "e.os:ch1",
+  #"t.rfs:ch1", "e.rfs:ch1",
+  #"t.tdm:ch1", "e.tdm:ch1",
+  "age:ch1",
+  "er:ch1",
+  "grade:ch1",
+  "size:ch1",
+  "node:ch1",
+  "hospital:ch1", "samplename:ch1", "filename:ch1"
+)]
+
+original_names <- colnames(clinical_selected)
+clean_names <- gsub(":ch1", "", original_names)
+clean_names <- gsub("\\.", "_", clean_names)
+colnames(clinical_selected) <- clean_names
+
+clinical_cleaned <- as.data.frame(lapply(clinical_selected, function(x) {
+  x_num <- suppressWarnings(as.numeric(as.character(x)))
+  if (all(is.na(x_num))) x else x_num
+}))
+
+for (i in 10:ncol(clinical_cleaned)) {
+  if (length(unique(clinical_cleaned[, i])) <= 4) {
+    clinical_cleaned[, i] <- factor(clinical_cleaned[, i])
+  }
+}
+
+clinical_cleaned_7390 <- clinical_cleaned %>%
+  select(geo_accession, t_dmfs, e_dmfs, age, er, grade, size, hospital)
+
+
+kable_table_func(subset_tibble, "Table 1: Subset of Gene Expression Matrix (Top 5 Probes and Samples)")
+kable_table_func(head(clinical_cleaned_7390, 5), "Table 2: Subset of Clinical Data (Top 5 Probes and Samples)")
+
+```
+
+## Data Preprocessing and Exploratory Data Analysis (EDA)
+
+Clean clinical data: handle missing values and outliers
+
+```{r}
+#| echo: false
+#| #| warning: false
+#| 
+generate_box_plots_base <- function(data, continuous_variables) {
+  #'
+  #' Generate box plots using base R graphics
+  #'
+  
+  for (var in continuous_variables) {
+    # Remove NA values
+    var_data <- na.omit(data[[var]])
+    
+    par(mar = c(3, 4, 3, 2))  # Set margins
+    boxplot(var_data,
+            col = "lightblue",
+            main = paste("Boxplot of", var),
+            ylab = var,
+            cex.main = 0.8,
+            cex.lab = 0.8,
+            outcol = "red",
+            outpch = 19,
+            cex = 0.6)
+    
+    grid(nx = NA, ny = NULL, lwd = 0.2)
+  }
+}
+
+
+numeric_vars <- names(clinical_cleaned_7390)[sapply(clinical_cleaned_7390, is.numeric)]
+generate_box_plots_base(clinical_cleaned_7390, numeric_vars)
+#value_range <- range(expr)
+#print(paste("取值范围: ", value_range[1], " 到 ", value_range[2]))
+
+```
+
+The box plot of clinical data shows no outliers.
+
+```{r}
+#| echo: false
+#| #| warning: false
+max(expr)
+min(expr)
+row_means <- rowMeans(expr, na.rm = TRUE)
+row_sds <- apply(expr, 1, sd, na.rm = TRUE)
+
+# 查看这些统计量的摘要信息
+summary(row_means)
+summary(row_sds)
+
+```
+
+The value of gene expression ranges from `r min(expr)` to `r max(expr)` and has multiple decimal places. This range is typical data converted by Log2.
+
+Because in the subsequent analysis, we need to conduct survival analysis, compare the impact of different genes on prognosis and the strength of their effects, and compare the effect size (HR) of different genes on the same scale. Otherwise, the coefficient of highly expressed genes may naturally be higher. It is necessary to standardize Z-score separately for each gene.
+
+```{r}
+#| echo: false
+#| #| warning: false
+# Detect and define factor variables appropriately:
+for (i in 4:7) {
+ if (length(unique(clinical_cleaned_7390[, i])) <= 4) {
+   clinical_cleaned_7390[, i] <- factor(clinical_cleaned_7390[, i])
+ }
+}
+
+colSums(is.na(clinical_cleaned_7390))
+```
+In clinical data, only the grade column has two missing values. Since the grade column is a factor and the level is 3, the "polr" method in mice is used to interpolate the missing values multiple times, and the Majority vote value is selected as the final interpolated value.
+
+
+```{r}
+#| echo: false
+#| #| warning: false
+library(mice)
+
+impute_missing_value <- function(clinical_cleaned, selected_col, missed_col) {
+  #' Perform multiple imputation using mice package
+  #' 
+  #' @param clinical_cleaned Cleaned clinical data frame
+  #' @param selected_col Columns used in imputation model
+  #' @param missed_col Target column(s) to impute
+  #' @return Data frame with imputed missing values
+  
+  # Extract relevant variables
+  df_miss <- clinical_cleaned[, selected_col]
+  
+  # Set imputation methods
+  methods <- make.method(df_miss)
+  for (col in missed_col) {
+    if (col %in% c("grade", "TNM_T", "TNM_N")) {
+      methods[col] <- "polr"
+    } else if (col %in% c("er", "TNM_M", "Chemotherapy_Adjuvant", "MMR_Status", "KRAS_Mutation")) {
+      methods[col] <- "logreg"
+    }
+  }
+  
+  # Perform imputation
+  imp <- mice(df_miss, m = 20, method = methods, seed = 123)
+  
+  # Majority vote function
+  Mode <- function(x) {
+    ux <- unique(x)
+    ux[which.max(tabulate(match(x, ux)))]
+  }
+  
+  # Replace missing values
+  for (col in missed_col) {
+    tbl <- imp$imp[[col]]
+    if (is.null(tbl) || nrow(tbl) == 0) next
+    
+    filled_values <- apply(tbl, 1, Mode)
+    ids <- names(filled_values)
+    idx <- match(ids, rownames(clinical_cleaned))
+    keep <- !is.na(idx) & !is.na(filled_values)
+    
+    if (any(keep)) {
+      vals <- filled_values[keep]
+      pos <- idx[keep]
+      clinical_cleaned[[col]][pos] <- vals
+    }
+  }
+  return(clinical_cleaned)
+}
+
+clinical_cleaned_7390 <- impute_missing_value(clinical_cleaned_7390, selected_col= c("age", "er", "grade", "size"), missed_col = "grade")
+
+hospital_counts <- table(clinical_cleaned_7390$hospital)
+```
+
+There are `r length(unique(clinical_cleaned_7390$hospital))` hospitals in the clinical data. Because the ggsurvplot 显示这些医院的Kaplan-Meier生存曲线没有重合而且log rank test 显示p = 0.1 所以后续需要考虑这些医院带来的随机效应。
+
+
+```{r}
+#| echo: false
+#| #| warning: false
+library(survminer)
+fit <- survfit(Surv(t_dmfs, e_dmfs) ~ hospital, data = clinical_cleaned_7390)
+ggsurvplot(fit, data = clinical_cleaned_7390, pval = TRUE) 
+
+
+library(coxme)
+# 示例代码
+coxph_model <- coxme(Surv(time = t_dmfs, event = e_dmfs) ~ age + er + grade + size + (1 | hospital), data = clinical_cleaned_7390)
+summary(coxph_model)
+
+coxph_pur <- coxph(Surv(time = t_dmfs, event = e_dmfs) ~ age + er + grade + size , data = clinical_cleaned_7390)
+summary(coxph_pur)
+
+
+```
+
+```{r}
+#| echo: false
+#| #| warning: false
+library(dplyr)
+expr_df <- as.data.frame(t(expr))
+#combine gene with clinical data
+clinical_t_e <- clinical_cleaned_7390 %>% select(geo_accession, t_dmfs, e_dmfs)
+merged_df <- expr_df %>%
+  rownames_to_column("geo_accession") %>%
+  left_join(clinical_t_e, 
+            by = "geo_accession") %>%
+  column_to_rownames("geo_accession")
+
+
+train_cox_with_pca <- function(data = merged_df, 
+                               time_col,
+                               status_col,
+                               clinical_cleaned_7390,
+                               train_ratio = 0.7, 
+                               variance_threshold = 0.7,
+                               seed = 12345) {
+  
+  # Load required libraries
+  library(survival)
+  library(caret)
+  
+  # Set seed for reproducibility
+  set.seed(seed)
+  
+  # Prepare feature matrix and survival data
+  features <- as.matrix(data[, !(names(data) %in% c(time_col, status_col))])
+  surv_data <- data[, c(time_col, status_col)]
+  #colnames(surv_data) <- c("time", "status")
+  
+  # Split data into training and testing sets
+  train_index <- sample(1:nrow(data), size = nrow(data), replace = TRUE)
+  all_indices <- 1:nrow(data)
+  test_index <- setdiff(all_indices, unique(train_index))
+
+  
+  train_feat <- features[train_index, ]
+  test_feat <- features[test_index, ]
+  train_surv <- surv_data[train_index,]
+  test_surv <- surv_data[test_index, ]
+  
+  # Perform PCA on training set
+  pca_train <- prcomp(train_feat, center = TRUE, scale. = TRUE)
+  pca_summary <- summary(pca_train)
+  
+  events_train <- sum(train_surv$e_dmfs)
+  max_vars_allowed <- floor(events_train / 3)
+  cumulative_variance <- pca_summary$importance[3, max_vars_allowed]  # Third row is cumulative variance
+cat("The first", max_vars_allowed, "principal components explain", 
+    round(cumulative_variance * 100, 2), "% of the variance\n")
+
+    # Determine number of PCs to reach variance threshold
+   # pve <- pca_train$sdev^2 / sum(pca_train$sdev^2)
+   # cum_pve <- cumsum(pve)
+   # n_pcs <- which(cum_pve >= variance_threshold)[1]
+  # 
+  # Get PC scores for training set
+  train_pcs <- pca_train$x[, 1:max_vars_allowed] #max_vars_allowed
+  clinical_t_e_2 <- clinical_cleaned_7390 %>% select(geo_accession, hospital)
+  
+  train_pcs2 <- as.data.frame(train_pcs) %>%
+  rownames_to_column("geo_accession") %>%
+  left_join(clinical_t_e_2, 
+            by = "geo_accession") %>%
+  column_to_rownames("geo_accession")
+  
+  # Transform test set using training PCA parameters
+  test_scaled <- scale(test_feat, center = pca_train$center, scale = pca_train$scale)
+  test_pcs <- test_scaled %*% pca_train$rotation
+  test_pcs <- test_pcs[, 1:max_vars_allowed] # n_pcs
+  test_pcs2 <- as.data.frame(test_pcs) %>%
+  rownames_to_column("geo_accession") %>%
+  left_join(clinical_t_e_2, 
+            by = "geo_accession") %>%
+  column_to_rownames("geo_accession")
+  
+  
+  # Create dataframes for modeling
+  train_df <- data.frame(train_pcs2, t_dmfs = train_surv$t_dmfs, e_dmfs = train_surv$e_dmfs)
+  test_df <- data.frame(test_pcs2, t_dmfs = test_surv$t_dmfs, e_dmfs = test_surv$e_dmfs)
+  
+  # Build COX model
+  ## COX ME model
+  cox_me_formula <- as.formula(paste("Surv(t_dmfs, e_dmfs) ~", 
+                                 paste(colnames(train_pcs), collapse = " + "),"+ (1 | hospital)"))
+  cox_me_model <- coxme(cox_me_formula, data = train_df, x = TRUE)
+  cox_me_model_summ <- summary(cox_me_model)
+  # this p value is to measue the random effect of hospital, smaller value indicates significient effect
+  cox_me_p_value <- as.data.frame(cox_me_model_summ$chi) %>% select("p")
+  
+  ## COX model
+  cox_formula <- as.formula(paste("Surv(t_dmfs, e_dmfs) ~", 
+                                 paste(colnames(train_pcs), collapse = " + ")))
+  cox_model <- coxph(cox_formula, data = train_df, x = TRUE)
+  ph_test <- cox.zph(cox_model)
+  global_ph_test <- ph_test$table[nrow(ph_test$table),3]
+  # Make predictions on test set
+  test_risk <- predict(cox_model, newdata = test_df, type = "risk")
+  
+  # Calculate performance metrics
+  #c_index <- concordance(cox_model, newdata = test_df)$concordance
+  test_result <- calculate_time_auc_cindex(model_type = "Cox", fitted_model= cox_model, df = test_df)
+  
+  # Return results
+  return(list(
+    model = cox_model,
+    train_pca = pca_train,
+    max_vars_allowed = max_vars_allowed,
+    cumulative_variance_explained = cumulative_variance,
+    c_index = test_result$c_index,
+    iAUC = test_result$iAUC,
+    total_score = test_result$c_index + test_result$iAUC,
+    global_ph_test = global_ph_test,
+    cox_me_model_summary = summary(cox_me_model),
+    cox_me_p_value = cox_me_p_value,
+    cox_model_summary = summary(cox_model)
+  ))
+}
+
+# Example usage:
+results <- train_cox_with_pca(data = merged_df, time_col = "t_dmfs", status_col = "e_dmfs", clinical_cleaned_7390, train_ratio = 0.7, variance_threshold = 0.7, seed = 12345)
+
+# Set number of iterations
+n_runs <- 100
+
+# Create empty vectors to store performance metrics for each run
+c_index_results <- numeric(n_runs)
+iAUC_results <- numeric(n_runs)
+total_score_results <- numeric(n_runs)
+
+# Create a list to store all complete results (optional, if memory permits)
+all_results_list <- list()
+
+# Initialize variables to track the best results
+best_total_score <- -Inf  # Initialize to negative infinity
+best_run_id <- 0
+best_results <- NULL
+
+# Run 100 iterations
+for (i in 1:n_runs) {
+  # Set different random seeds to ensure different data splits each time
+  current_seed <- 123456 + i
+  set.seed(current_seed)
+  
+  cat(sprintf("Running iteration %d/%d...\n", i, n_runs))
+  
+  # Execute the model training function
+  results <- train_cox_with_pca(
+    data = merged_df, 
+    time_col = "t_dmfs", 
+    status_col = "e_dmfs", 
+    clinical_cleaned_7390, 
+    train_ratio = 0.7, 
+    variance_threshold = 0.7, 
+    seed = current_seed
+  )
+  
+  # Store performance metrics
+  c_index_results[i] <- results$c_index
+  iAUC_results[i] <- results$iAUC
+  total_score_results[i] <- results$total_score
+  
+  # Store complete results in list (optional)
+  all_results_list[[i]] <- results
+  
+  # Check if this is the best result so far
+  if (results$total_score > best_total_score) {
+    best_total_score <- results$total_score
+    best_run_id <- i
+    best_results <- results  # Save the complete best result object
+    
+    cat(sprintf("  New best result found! Run ID: %d, Total Score: %.4f\n", i, best_total_score))
+  }
+  
+  # Print progress
+  cat(sprintf("  Completed: C-index = %.3f, iAUC = %.3f, Total = %.3f\n", 
+              results$c_index, results$iAUC, results$total_score))
+}
+
+# Calculate mean and standard deviation of performance metrics
+mean_c_index <- mean(c_index_results)
+sd_c_index <- sd(c_index_results)
+mean_iAUC <- mean(iAUC_results)
+sd_iAUC <- sd(iAUC_results)
+mean_total_score <- mean(total_score_results)
+sd_total_score <- sd(total_score_results)
+
+# Output average performance results
+
+cat("=== Average Performance Over Runs ===\n")
+cat(sprintf("Mean C-index:      %.4f ± %.4f\n", mean_c_index, sd_c_index))
+cat(sprintf("Mean iAUC:         %.4f ± %.4f\n", mean_iAUC, sd_iAUC))
+cat(sprintf("Mean Total Score:  %.4f ± %.4f\n", mean_total_score, sd_total_score))
+
+# Output best run results
+cat("\n=== Best Run Results ===\n")
+cat(sprintf("Best Run ID:       %d\n", best_run_id))
+cat(sprintf("Best Seed:         %d\n", 12345 + best_run_id))
+cat(sprintf("C-index:          %.4f\n", best_results$c_index))
+cat(sprintf("iAUC:             %.4f\n", best_results$iAUC))
+cat(sprintf("Total Score:      %.4f\n", best_results$total_score))
+cat(sprintf("Number of PCs:     %d\n", best_results$max_vars_allowed))
+cat(sprintf("Cumulative Variance: %.1f%%\n", best_results$cumulative_variance_explained * 100))
+
+# Check PH test results (if interested)
+cat(sprintf("Global PH Test p-value: %.9f\n", best_results$global_ph_test))
+
+# Save best results to a variable for further analysis
+best_run_results <- best_results
+
+# Display detailed results from all runs
+cat("\n=== Performance Metrics for All Runs ===\n")
+performance_df <- data.frame(
+  Run = 1:n_runs,
+  Seed = 12345 + 1:n_runs,
+  C_Index = round(c_index_results, 4),
+  iAUC = round(iAUC_results, 4),
+  Total_Score = round(total_score_results, 4)
+)
+#print(performance_df)
+
+
+
+
+
+```
+
+
+
+standardization. Perform unsupervised clustering (e.g., K-means or hierarchical clustering) on gene expression data to identify potential molecular subgroups.
+
+```{r}
+#| echo: false
+#| #| warning: false
+#| 
+# Load necessary libraries
+#install.packages(c("pheatmap")) # Uncomment to install
+library(survival)     # For survival analysis
+library(survminer)    # For visualization of survival analysis
+library(pheatmap)     # For creating heatmaps
+
+# ------------------------------------------------------------------------------
+# STEP 1: Data Preparation and Preprocessing
+# ------------------------------------------------------------------------------
+
+# Ensure the expression matrix and clinical data have matching sample IDs
+
+different_samples <- setdiff(colnames(expr), clinical_cleaned_7390$geo_accession)
+length(different_samples) == 0
+
+
+# Feature selection: Identify most variable genes for clustering
+# Using genes with highest variance across samples reduces noise
+gene_vars <- apply(expr, 1, var) # Calculate variance for each gene (row)
+top_gene_index <- order(gene_vars, decreasing = TRUE)[1:1500] # Select top 1500 most variable genes
+expr_filtered <- expr[top_gene_index, ] # Subset expression matrix
+
+# ------------------------------------------------------------------------------
+# STEP 2: Hierarchical Clustering of Samples
+# ------------------------------------------------------------------------------
+
+# Calculate distance matrix between samples(patients) features are genes
+# Note: dist() computes distance between rows, so we transpose the matrix
+# to make samples (formerly columns) become rows
+sample_dist <- dist(t(expr_filtered), method = "euclidean") 
+# Alternative: Correlation-based distance (common in genomics)
+# sample_dist <- as.dist(1 - cor(expr_filtered, method = "pearson"))
+
+# Perform hierarchical clustering using Ward's method
+# Ward's method minimizes within-cluster variance, producing compact clusters
+sample_hclust <- hclust(sample_dist, method = "ward.D2")
+
+# Visualize the dendrogram to determine appropriate number of clusters (K)
+plot(sample_hclust, 
+     labels = FALSE,          # Hide sample labels for clarity
+     main = "Sample Hierarchical Clustering Dendrogram",
+     xlab = "Samples", 
+     ylab = "Height (Distance)")
+
+
+
+
+
+# ------------------------------------------------------------------------------
+# STEP 3: Cut Dendrogram to Define Molecular Subtypes
+# ------------------------------------------------------------------------------
+
+# Cut the dendrogram to obtain cluster assignments
+# Choose k based on dendrogram structure and biological rationale
+
+# Initialize variables to store results
+p_values <- numeric(30)  # Store p-values for k=2 to 50
+best_k <- NULL
+best_p_value <- Inf
+
+# Iterate over k from 2 to 50
+for (k in 2:31) {
+  # Cut dendrogram to define k molecular subtypes
+  clusters <- cutree(sample_hclust, k = k)
+  
+  # Add cluster information to clinical data
+  clinical_cleaned_7390$Molecular_Subtype <- factor(clusters, 
+                                                   labels = paste0("Subtype_", 1:k))
+  
+  # Create survival object
+  surv_obj <- Surv(time = clinical_cleaned_7390$t_dmfs, 
+                  event = clinical_cleaned_7390$e_dmfs)
+  
+  # Fit survival curves
+  fit <- survfit(surv_obj ~ Molecular_Subtype, data = clinical_cleaned_7390)
+  
+  # Perform log-rank test and extract p-value
+  logrank_test <- survdiff(surv_obj ~ Molecular_Subtype, data = clinical_cleaned_7390)
+  p_value <- 1 - pchisq(logrank_test$chisq, df = length(logrank_test$n) - 1)
+  
+  # Store p-value
+  p_values[k-1] <- p_value
+  
+  # Update best k if current p-value is lower
+  if (p_value < best_p_value) {
+    best_p_value <- p_value
+    best_k <- k
+  }
+  
+  # Print progress
+  cat(sprintf("k = %d: p-value = %.4f\n", k, p_value))
+}
+
+# Print final results
+cat(sprintf("\nOptimal k: %d with minimum p-value: %.6f\n", best_k, best_p_value))
+
+# Create results dataframe
+results_df <- data.frame(
+  k = 2:31,
+  p_value = p_values
+)
+
+# Plot p-values vs k
+library(ggplot2)
+ggplot(results_df, aes(x = k, y = -log10(p_value))) +
+  geom_point() +
+  geom_line() +
+  geom_vline(xintercept = best_k, linetype = "dashed", color = "red") +
+  annotate("text", x = best_k, y = max(-log10(p_values)), 
+           label = paste("Optimal k =", best_k), color = "red") +
+  labs(title = "P-value vs Number of Clusters (k)",
+       x = "Number of Clusters (k)",
+       y = "-log10(p-value)") +
+  theme_minimal()
+
+
+k <- 5 # Example: define 2 molecular subtypes
+clusters <- cutree(sample_hclust, k = k)
+
+# Add cluster information to clinical data as a new factor variable
+clinical_cleaned_7390$Molecular_Subtype <- factor(clusters,
+                                              labels = paste0("Subtype_", 1:k))
+
+surv_obj <- Surv(time = clinical_cleaned_7390$t_dmfs,
+                 event = clinical_cleaned_7390$e_dmfs)
+
+# Fit survival curves stratified by molecular subtype
+fit <- survfit(surv_obj ~ Molecular_Subtype, data = clinical_cleaned_7390)
+
+# Generate Kaplan-Meier survival plot with statistical analysis
+surv_plot <- ggsurvplot(fit,
+           data = clinical_cleaned_7390,
+           pval = TRUE,
+          # pval.coord = c(50, 0.9),
+           conf.int = FALSE,
+           risk.table = TRUE,
+           risk.table.height = 0.25,
+           legend.labs = levels(clinical_cleaned_7390$Molecular_Subtype),
+           legend.title = "Molecular Subtype",
+           palette = "jama",
+           xlab = "Time (Days)", 
+           ylab = "Overall Survival Probability",
+           title = "Survival Analysis by Molecular Subtype",
+           ggtheme = theme_minimal())
+
+print(surv_plot)
+
+```
+
+Use t-SNE or UMAP for 2D visualization of clustering patterns to aid interpretation of subgroup structure.
+
+```{r}
+
+
+```
+
+
+
+
+
+
+Feature Selection (if proportional hazards (PH) assumption holds) Method 1: Univariate Cox analysis to identify survival-associated genes Method 2: LASSO-Cox regression to select key predictive genes
+
+When you click the **Render** button a document will be generated that includes both content and the output of embedded code. You can embed code like this:
+
+```{r}
+1 + 1
+```
+
+You can add options to executable code like this
+
+```{r}
+#| echo: false
+2 * 2
+```
+
+The `echo: false` option disables the printing of code (only output is displayed).

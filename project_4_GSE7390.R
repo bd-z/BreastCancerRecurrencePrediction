@@ -12,8 +12,8 @@ options(scipen = 999)
 # expr <- exprs(gset[[1]])
 # clinical <- pData(gset[[1]])
 
-saveRDS(expr_7390, file = "expr_7390.RDS")
-saveRDS(clinical_7390, file = "clinical_7390.rds")
+#saveRDS(expr_7390, file = "expr_7390.RDS")
+#saveRDS(clinical_7390, file = "clinical_7390.rds")
 
 expr <- readRDS("expr_7390.RDS")
 clinical <- readRDS("clinical_7390.rds")
@@ -21,73 +21,106 @@ clinical <- readRDS("clinical_7390.rds")
 # 查看列名确定生存变量位置
 colnames(clinical)
 
-
-# 提取DMFS时间与事件
-clinical$time <- as.numeric(clinical$`t.dmfs:ch1`)
-clinical$status <- as.numeric(clinical$`e.dmfs:ch1`)
-
-# 提取生存时间、事件状态及重要协变量
 clinical_selected <- clinical[, c(
   "geo_accession",
-  "t.dmfs:ch1",
-  "e.dmfs:ch1",
-  
-  # DMFS 时间与事件
-  "t.os:ch1", "e.os:ch1",         # OS 时间与事件
-  "t.rfs:ch1", "e.rfs:ch1",       # RFS 时间与事件
-  "t.tdm:ch1", "e.tdm:ch1",       # 首次远处转移时间与事件
-  "age:ch1",                      # 年龄
-  "er:ch1",                       # 雌激素受体状态
-  "grade:ch1",                    # 肿瘤分级
-  "size:ch1",                     # 肿瘤大小
-  "node:ch1",                     # 淋巴结状态
-  #"Histtype:ch1",                 # 组织学类型
-  #"Angioinv:ch1",                 # 血管侵袭
-  #"Lymp_infil:ch1",               # 淋巴浸润
-  #"NPI:ch1",                      # 诺丁汉预后指数
-  #"veridex_risk:ch1",             # Veridex 风险评分
-  #"risknpi:ch1",                   # NPI 风险组\
+  "t.dmfs:ch1", "e.dmfs:ch1",
+  #"t.os:ch1", "e.os:ch1",
+  #"t.rfs:ch1", "e.rfs:ch1",
+  #"t.tdm:ch1", "e.tdm:ch1",
+  "age:ch1",
+  "er:ch1",
+  "grade:ch1",
+  "size:ch1",
+  "node:ch1",
   "hospital:ch1", "samplename:ch1", "filename:ch1"
 )]
-
-head(clinical_selected)
 
 original_names <- colnames(clinical_selected)
 clean_names <- gsub(":ch1", "", original_names)
 clean_names <- gsub("\\.", "_", clean_names)
 colnames(clinical_selected) <- clean_names
 
-
-#write.csv(clinical_selected, "GSE7390_clinical_selected.csv", row.names = FALSE)
-
-#clinical_selected <- read.csv("GSE7390_clinical_selected.csv")
-
-
 clinical_cleaned <- as.data.frame(lapply(clinical_selected, function(x) {
   x_num <- suppressWarnings(as.numeric(as.character(x)))
   if (all(is.na(x_num))) x else x_num
-})) #%>%
-  #select(-Angioinv, -Lymp_infil, -Histtype, - risknpi, -NPI)# %>%
-  #na.omit()
-colSums(is.na(clinical_cleaned))
+}))
 
-
-
-
-
-
-#table(clinical_cleaned$Histtype, useNA = "ifany")
-# Detect and define factor variables appropriately:
-for (i in 10:ncol(clinical_cleaned)) {
+for (i in 4:ncol(clinical_cleaned)) {
   if (length(unique(clinical_cleaned[, i])) <= 4) {
     clinical_cleaned[, i] <- factor(clinical_cleaned[, i])
   }
 }
 
 clinical_cleaned_7390 <- clinical_cleaned %>%
-  select(geo_accession, t_os, e_os, 
-         age, er, grade, size) # , hospital
-
+  select(geo_accession, t_dmfs, e_dmfs, age, er, grade, size, hospital)
+hospital_counts <- table(clinical_cleaned_7390$hospital)
+# 
+# # 提取DMFS时间与事件
+# clinical$time <- as.numeric(clinical$`t.dmfs:ch1`)
+# clinical$status <- as.numeric(clinical$`e.dmfs:ch1`)
+# 
+# # 提取生存时间、事件状态及重要协变量
+# clinical_selected <- clinical[, c(
+#   "geo_accession",
+#   "t.dmfs:ch1",
+#   "e.dmfs:ch1",
+#   
+#   # DMFS 时间与事件
+#   "t.os:ch1", "e.os:ch1",         # OS 时间与事件
+#   "t.rfs:ch1", "e.rfs:ch1",       # RFS 时间与事件
+#   "t.tdm:ch1", "e.tdm:ch1",       # 首次远处转移时间与事件
+#   "age:ch1",                      # 年龄
+#   "er:ch1",                       # 雌激素受体状态
+#   "grade:ch1",                    # 肿瘤分级
+#   "size:ch1",                     # 肿瘤大小
+#   "node:ch1",                     # 淋巴结状态
+#   #"Histtype:ch1",                 # 组织学类型
+#   #"Angioinv:ch1",                 # 血管侵袭
+#   #"Lymp_infil:ch1",               # 淋巴浸润
+#   #"NPI:ch1",                      # 诺丁汉预后指数
+#   #"veridex_risk:ch1",             # Veridex 风险评分
+#   #"risknpi:ch1",                   # NPI 风险组\
+#   "hospital:ch1", "samplename:ch1", "filename:ch1"
+# )]
+# 
+# head(clinical_selected)
+# 
+# original_names <- colnames(clinical_selected)
+# clean_names <- gsub(":ch1", "", original_names)
+# clean_names <- gsub("\\.", "_", clean_names)
+# colnames(clinical_selected) <- clean_names
+# 
+# 
+# #write.csv(clinical_selected, "GSE7390_clinical_selected.csv", row.names = FALSE)
+# 
+# #clinical_selected <- read.csv("GSE7390_clinical_selected.csv")
+# 
+# 
+# clinical_cleaned <- as.data.frame(lapply(clinical_selected, function(x) {
+#   x_num <- suppressWarnings(as.numeric(as.character(x)))
+#   if (all(is.na(x_num))) x else x_num
+# })) #%>%
+#   #select(-Angioinv, -Lymp_infil, -Histtype, - risknpi, -NPI)# %>%
+#   #na.omit()
+# colSums(is.na(clinical_cleaned))
+# 
+# 
+# 
+# 
+# 
+# 
+# #table(clinical_cleaned$Histtype, useNA = "ifany")
+# # Detect and define factor variables appropriately:
+# for (i in 10:ncol(clinical_cleaned)) {
+#   if (length(unique(clinical_cleaned[, i])) <= 4) {
+#     clinical_cleaned[, i] <- factor(clinical_cleaned[, i])
+#   }
+# }
+# 
+# clinical_cleaned_7390 <- clinical_cleaned %>%
+#   select(geo_accession, t_os, e_os, 
+#          age, er, grade, size) # , hospital
+# 
 
 ########################################
 library(GEOquery)
@@ -298,14 +331,15 @@ clinical_df_7390 <- clinical_cleaned_7390 %>%
 
 
 # updated with inside imputation
-run_bootstrap_validation_safe <- function(expr_mat, clinical_df, 
+
+run_bootstrap_validation_3_model <- function(expr_mat, clinical_df, 
                                           B = 10, 
                                           seed = 90000,
                                           min_epv = 2.5, 
                                           coef_max = 10,
                                           min_concord = 0.98) {
   
-  n <- ncol(expr_mat)
+ 
   km_p_list <- list() #save KM log rank test p value for test_data
   train_indices_list <- list()
   gene_list <- list()
@@ -393,66 +427,77 @@ run_bootstrap_validation_safe <- function(expr_mat, clinical_df,
     set.seed(current_seed) 
     message(sprintf("Bootstrap %d: seed = %d", b, seed + b))
     
-    train_idx <- sample(seq_len(n), size = n, replace = TRUE)
-    train_indices_list[b] <- train_idx
-    test_idx  <- setdiff(seq_len(n), unique(train_idx))  # OOB 样本
-    message(sprintf("Bootstrap %d: train_idx length = %d, test_idx length = %d", 
-                    b, length(train_idx), length(test_idx)))
+    # n <- ncol(expr_mat)
+    # train_idx <- sample(seq_len(n), size = n, replace = TRUE)
+    # train_indices_list[[b]] <- train_idx
+    # test_idx  <- setdiff(seq_len(n), unique(train_idx))  # OOB 样本
+    # message(sprintf("Bootstrap %d: train_idx length = %d, test_idx length = %d", 
+    #                 b, length(train_idx), length(test_idx)))
+    # 
+    # if (length(test_idx) == 0) {
+    #   message(sprintf("Bootstrap %d skipped: No OOB samples", b))
+    #   next
+    # }
+    # 
+    # train_expr     <- expr_mat[, train_idx, drop = FALSE]
+    # test_expr      <- expr_mat[, test_idx, drop = FALSE]
+    # train_clinical <- clinical_df[train_idx, , drop = FALSE]
+    # test_clinical  <- clinical_df[test_idx, , drop = FALSE]
+    # 
+    # columns_to_remove <- c("e_dmfs", "t_dmfs", "geo_accession", "hospital")
+    # selected_col <- setdiff(colnames(clinical_df), columns_to_remove)
+    # missed_col <- colnames(clinical_df)[colSums(is.na(clinical_df)) > 0]
+    # 
+    # res <- impute_fit_apply(
+    #   train_df     = train_clinical,
+    #   test_df      = test_clinical,
+    #   selected_col = selected_col,
+    #   missed_col   = missed_col
+    # )
+    # 
+    # train_clinical <- res$train
+    # test_clinical  <- res$test
+    # 
+    # 
+    # message("Bootstrap 采样完成：train_expr 维度 = ", toString(dim(train_expr)), 
+    #         ", test_expr 维度 = ", toString(dim(test_expr)),
+    #         ", train_clinical 维度 = ", toString(dim(train_clinical)),
+    #         ", test_clinical 维度 = ", toString(dim(test_clinical)))
+    # 
+    # if (ncol(train_expr) == 0 || nrow(train_expr) == 0) {
+    #   message(sprintf("Bootstrap %d skipped: Invalid train_expr dimensions", b))
+    #   next
+    # }
+    # 
+    # # 事件数
+    # events_train <- sum(train_clinical$e_dmfs)
+    data_prepare_result <- bootstrap_sampl_split_miss_vale_imputation(expr_mat, clinical_df)
     
-    if (length(test_idx) == 0) {
-      message(sprintf("Bootstrap %d skipped: No OOB samples", b))
-      next
-    }
-    
-    train_expr     <- expr_mat[, train_idx, drop = FALSE]
-    test_expr      <- expr_mat[, test_idx, drop = FALSE]
-    train_clinical <- clinical_df[train_idx, , drop = FALSE]
-    test_clinical  <- clinical_df[test_idx, , drop = FALSE]
-    
-    columns_to_remove <- c("e_dmfs", "t_dmfs", "geo_accession", "hospital")
-    selected_col <- setdiff(colnames(clinical_df), columns_to_remove)
-    missed_col <- colnames(clinical_df)[colSums(is.na(clinical_df)) > 0]
-    
-    res <- impute_fit_apply(
-      train_df     = train_clinical,
-      test_df      = test_clinical,
-      selected_col = selected_col,
-      missed_col   = missed_col
-    )
-    
-    train_clinical <- res$train
-    test_clinical  <- res$test
-    
-    
-    message("Bootstrap 采样完成：train_expr 维度 = ", toString(dim(train_expr)), 
-            ", test_expr 维度 = ", toString(dim(test_expr)),
-            ", train_clinical 维度 = ", toString(dim(train_clinical)),
-            ", test_clinical 维度 = ", toString(dim(test_clinical)))
-    
-    if (ncol(train_expr) == 0 || nrow(train_expr) == 0) {
+    if (is.null(data_prepare_result)) {
       message(sprintf("Bootstrap %d skipped: Invalid train_expr dimensions", b))
       next
     }
+    train_expr <- data_prepare_result$train_expr
+    test_expr <- data_prepare_result$test_expr
+    train_clinical <- data_prepare_result$train_clinical
+    test_clinical <- data_prepare_result$test_clinical
+    events_train <- data_prepare_result$events_train
     
-    # 事件数
-    events_train <- sum(train_clinical$e_dmfs)
     message(sprintf("Bootstrap %d: Number of events in training set = %d", b, events_train))
     message("事件数计算完成")
     
     # MAD 过滤
-    mad_train_expr <- apply(train_expr, 1, mad)
-    cutoff <- quantile(mad_train_expr, 0.25)
-    keep_mad <- mad_train_expr > cutoff
-    message(sprintf("Bootstrap %d: MAD 过滤完成，保留基因数 = %d, cutoff = %.4f", 
-                    b, sum(keep_mad), cutoff))
+    # mad_train_expr <- apply(train_expr, 1, mad)
+    # cutoff <- quantile(mad_train_expr, 0.1)
+    # keep_mad <- mad_train_expr > cutoff
+    # message(sprintf("Bootstrap %d: MAD 过滤完成，保留基因数 = %d, cutoff = %.4f", 
+    #                 b, sum(keep_mad), cutoff))    # 
+    # train_expr2 <- train_expr[keep_mad, , drop = FALSE]
+    # test_expr2 <- test_expr[keep_mad, , drop = FALSE]
+    filtered_data <- filter_genes_by_mad(train_expr, test_expr, quantile_cutoff = 0.25)
+    train_expr2 <- filtered_data$train_expr
+    test_expr3 <- filtered_data$test_expr  
     
-    if (sum(keep_mad) == 0) {
-      message(sprintf("Bootstrap %d skipped: No genes passed MAD filter", b))
-      next
-    }
-    
-    train_expr2 <- train_expr[keep_mad, , drop = FALSE]
-    test_expr2 <- test_expr[keep_mad, , drop = FALSE]
     message("MAD 过滤后矩阵生成完成：train_expr2 维度 = ", toString(dim(train_expr2)), 
             ", test_expr2 维度 = ", toString(dim(test_expr2)))
     
@@ -560,7 +605,7 @@ run_bootstrap_validation_safe <- function(expr_mat, clinical_df,
     message(sprintf("Bootstrap %d: 选择基因完成，selected_gene_df 行数 = %d, EPV = %.2f", 
                     b, nrow(selected_gene_df), events_train / nrow(selected_gene_df)))
     
-    gene_list[b] <- selected_gene_df$gene
+    gene_list[[b]] <- selected_gene_df$gene
     
     result <- compute_risk_score_train(
       gene_mat_scaled  = train_expr_filtered,
@@ -602,22 +647,23 @@ run_bootstrap_validation_safe <- function(expr_mat, clinical_df,
     
     message(sprintf("Bootstrap %d: 预测变量选择完成，predictors 长度 = %d", 
                     b, length(predictors)))
+    df <- clinical_cleaned_risk_train[, c(predictors, "t_dmfs", "e_dmfs")]
     
     # 相关性过滤
-    predictor_data <- clinical_cleaned_risk_train[, predictors]
-    numeric_vars <- predictor_data[, sapply(predictor_data, is.numeric), drop = FALSE]
-    filtered_numeric_vars <- remove_high_corr(numeric_vars, threshold = 0.9)
-    filtered_data <- cbind(
-      predictor_data[, !sapply(predictor_data, is.numeric), drop = FALSE],
-      filtered_numeric_vars
-    )
-    predictors_filtered <- colnames(filtered_data)
-    df <- cbind(filtered_data, clinical_cleaned_risk_train[, c("t_dmfs", "e_dmfs")])
-    message("预测变量相关性过滤完成：filtered_data 维度 = ", toString(dim(filtered_data)))
+    # predictor_data <- clinical_cleaned_risk_train[, predictors]
+    # numeric_vars <- predictor_data[, sapply(predictor_data, is.numeric), drop = FALSE]
+    # filtered_numeric_vars <- remove_high_corr(numeric_vars, threshold = 0.9)
+    # filtered_data <- cbind(
+    #   predictor_data[, !sapply(predictor_data, is.numeric), drop = FALSE],
+    #   filtered_numeric_vars
+    # )
+    # predictors_filtered <- colnames(filtered_data)
+    # df <- cbind(filtered_data, clinical_cleaned_risk_train[, c("t_dmfs", "e_dmfs")])
+    # message("预测变量相关性过滤完成：filtered_data 维度 = ", toString(dim(filtered_data)))
     
     #model multimodal
     model_m <- run_bootstrap_iteration(
-      predictors_filtered = predictors_filtered,
+      predictors_filtered = predictors,
       df = df,
       b = b,
       coef_max = coef_max,
@@ -645,9 +691,9 @@ run_bootstrap_validation_safe <- function(expr_mat, clinical_df,
     
     
     #model gene
-    predictors_filtered_g <- predictors_filtered[5:length(predictors_filtered)]
+    predictors_g <- predictors[5:length(predictors_filtered)]
     model_g <- run_bootstrap_iteration(
-      predictors_filtered = predictors_filtered_g,
+      predictors_filtered = predictors_g,
       df = df,
       b = b,
       coef_max = coef_max,
@@ -675,9 +721,9 @@ run_bootstrap_validation_safe <- function(expr_mat, clinical_df,
     
     
     #model clinic
-    predictors_filtered_c <- predictors_filtered[1:4]
+    predictors_c <- predictors_filtered[1:4]
     model_c <- run_bootstrap_iteration(
-      predictors_filtered = predictors_filtered_c,  # Fixed: should be predictors_filtered_c not predictors_filtered_g
+      predictors_filtered = predictors_c,  # Fixed: should be predictors_filtered_c not predictors_filtered_g
       df = df,
       b = b,
       coef_max = coef_max,
@@ -702,7 +748,7 @@ run_bootstrap_validation_safe <- function(expr_mat, clinical_df,
     best_iter_mc <- model_c$best_iter
     best_seed_mc <- model_c$best_seed
     best_method_mc <- model_c$best_method
-    
+#####    
     # #model multimodal
     # model_m <- run_bootstrap_iteration(
     #   predictors_filtered = predictors_filtered,
@@ -955,6 +1001,23 @@ run_bootstrap_validation_safe <- function(expr_mat, clinical_df,
   #   gene_list = gene_list_mc,
   #   B = B
   # )
+#####
+  
+  # 创建数据框
+  summary_df <- data.frame(
+    model = c("mc", "mg", "mm"),
+    rsf_predictors = I(list(
+      rsf_predictor_list_mc[[1]],
+      rsf_predictor_list_mg[[1]],
+      rsf_predictor_list_mm[[1]]
+    )),
+    best_performance = c(best_perf_mc, best_perf_mg, best_perf_mm),
+    best_iteration = c(best_iter_mc, best_iter_mg, best_iter_mm),
+    best_seed = c(best_seed_mc, best_seed_mg, best_seed_mm),
+    best_method = c(best_method_mc, best_method_mg, best_method_mm),
+    stringsAsFactors = FALSE
+  )
+  
   summary_results_mm <- summarize_performance(
     perf_list = perf_list_mm,
     B = B
@@ -981,10 +1044,17 @@ run_bootstrap_validation_safe <- function(expr_mat, clinical_df,
   message("性能指标汇总完成: mean_km_p = ", mean_km_p)
   
   return(list(
+    summary_df = summary_df,
+    best_model_mc = best_model_mc,
+    best_model_mg = best_model_mg,
+    best_model_mm = best_model_mm,
     train_indices_list = train_indices_list,
     mean_km_p = mean_km_p,  
     km_p_values = km_p_list_nz, 
     gene_frequency = gene_freq,
+    summary_results_mm = summary_results_mm,
+    summary_results_mg = summary_results_mg,
+    summary_results_mc = summary_results_mc
     
     
     # mean_cox_iAUC = mean_cox_iAUC,
@@ -1003,17 +1073,26 @@ run_bootstrap_validation_safe <- function(expr_mat, clinical_df,
   ))
 }
 
+# run_bootstrap_validation_3_model(expr_mat, clinical_df, 
+#                                              B = 10, 
+#                                              seed = 90000,
+#                                              min_epv = 2.5, 
+#                                              coef_max = 10,
+#                                              min_concord = 0.98)
 
-res7390_h <- run_bootstrap_validation_safe(expr_mat = expr_mat_7390,
+
+
+
+res7390_3_model3_2 <- run_bootstrap_validation_3_model(expr_mat = expr_mat_7390,
                                            clinical_df = clinical_df_7390, 
-                                           B = 20, 
-                                           seed = 9000000, 
+                                           B = 100, 
+                                           seed = 82000000, 
                                            min_epv = 4, 
                                            coef_max = 10, 
                                            min_concord = 0.97)
 
 
-saveRDS(res7390_h, file = "train_result_7390_h_best1_33.rds")
+saveRDS(res7390_3_model3, file = "res7390_3_model3.rds")
 
 
 res39582$best_model   # 最优 Cox 模型对象

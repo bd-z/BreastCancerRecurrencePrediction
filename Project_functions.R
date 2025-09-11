@@ -110,111 +110,166 @@ generate_box_plots <- function(data, continuous_variables) {
 
 library(mice)
 # Define the imputation function
+# impute_missing_value <- function(clinical_cleaned, selected_col, missed_col) {
+#   # Description:
+#   # Performs multiple imputation on selected clinical variables using the mice package.
+#   # Supports imputing one or more target columns with missing values.
+#   #
+#   # Input:
+#   # - clinical_cleaned: A cleaned clinical data frame
+#   # - selected_col: A character vector of columns used in the imputation model
+#   # - missed_col: One or more target columns (character vector) to impute
+#   #
+#   # Output:
+#   # - A data frame with the missing values in missed_col imputed using majority vote across multiple imputations.
+#   #
+#   # Features:
+#   # - Automatically assigns imputation methods:
+#   #     - "polr" for ordered categorical variables (e.g., grade)
+#   #     - "logreg" for binary variables (e.g., er)
+#   #     - Defaults to mice's standard method otherwise
+#   # - Replaces missing values in the original dataset
+#   # - Returns the updated dataset
+#   
+#   
+#   # Extract relevant variables for imputation
+#   df_miss <- clinical_cleaned[, selected_col]
+#   
+#   # Show missing data pattern
+#   md.pattern(df_miss)
+#   
+#   # Initialize imputation method for each column
+#   methods <- make.method(df_miss)
+#   
+#   # Assign specific imputation methods for each missed_col
+#   for (col in missed_col) {
+#     if (col %in% c("grade", "TNM_T", "TNM_N")) {
+#       methods[col] <- "polr"     # Ordered categorical
+#     } else if (col %in% c("er", "TNM_M", "Chemotherapy_Adjuvant", "MMR_Status", "KRAS_Mutation")) {
+#       methods[col] <- "logreg"   # Binary categorical
+#     } else {
+#       methods[col] <- ""         # Let mice choose default method
+#     }
+#   }
+#   
+#   # Perform multiple imputation
+#   imp <- mice(df_miss, m = 20, method = methods, seed = 123)
+#   
+#   # # Define custom mode function for majority voting
+#   Mode <- function(x) {
+#     ux <- unique(x)
+#     ux[which.max(tabulate(match(x, ux)))]
+#   }
+#    
+#   # # # Replace missing values for each target column
+#   # for (col in missed_col) {
+#   #   if (!is.null(imp$imp[[col]]) && nrow(imp$imp[[col]]) > 0) {
+#   #     filled_values <- apply(imp$imp[[col]], 1, Mode)
+#   #     print(paste("Filling column:", col))
+#   #     print(filled_values)
+#   #     clinical_cleaned[[col]][names(filled_values)] <- filled_values
+#   #     #clinical_cleaned[[col]][as.numeric(names(filled_values))] <- filled_values
+#   #   }
+#   # # }
+#   # # 
+#   
+#   
+#   for (col in missed_col) {
+#     tbl <- imp$imp[[col]]
+#     # skip if no imputations for this column
+#     if (is.null(tbl) || nrow(tbl) == 0) next
+#     
+#     # row-wise mode across m imputations -> one value per missing row
+#     filled_values <- apply(tbl, 1, Mode)  # named vector; names are IDs (GSM...)
+#     ids  <- names(filled_values)
+#     
+#     # map IDs to row positions
+#     idx <- match(ids, rownames(clinical_cleaned))
+#     keep <- !is.na(idx) & !is.na(filled_values)
+#     if (!any(keep)) next
+#     
+#     vals <- filled_values[keep]
+#     pos  <- idx[keep]
+#     
+#     # assign safely depending on column type
+#     if (is.factor(clinical_cleaned[[col]])) {
+#       # expand levels to include new values
+#       new_levels <- union(levels(clinical_cleaned[[col]]), unique(vals))
+#       clinical_cleaned[[col]] <- factor(clinical_cleaned[[col]], levels = new_levels)
+#       clinical_cleaned[[col]][pos] <- vals
+#     } else if (is.character(clinical_cleaned[[col]])) {
+#       clinical_cleaned[[col]][pos] <- as.character(vals)
+#     } else if (is.numeric(clinical_cleaned[[col]])) {
+#       suppressWarnings({
+#         num_vals <- as.numeric(vals)
+#       })
+#       ok <- !is.na(num_vals)
+#       clinical_cleaned[[col]][pos[ok]] <- num_vals[ok]
+#     } else {
+#       # fallback: coerce to character, assign, then factor back if needed
+#       tmp <- as.character(clinical_cleaned[[col]])
+#       tmp[pos] <- as.character(vals)
+#       clinical_cleaned[[col]] <- tmp
+#     }
+#   }
+#   return(clinical_cleaned)
+#   }
+  
+
 impute_missing_value <- function(clinical_cleaned, selected_col, missed_col) {
-  # Description:
-  # Performs multiple imputation on selected clinical variables using the mice package.
-  # Supports imputing one or more target columns with missing values.
-  #
-  # Input:
-  # - clinical_cleaned: A cleaned clinical data frame
-  # - selected_col: A character vector of columns used in the imputation model
-  # - missed_col: One or more target columns (character vector) to impute
-  #
-  # Output:
-  # - A data frame with the missing values in missed_col imputed using majority vote across multiple imputations.
-  #
-  # Features:
-  # - Automatically assigns imputation methods:
-  #     - "polr" for ordered categorical variables (e.g., grade)
-  #     - "logreg" for binary variables (e.g., er)
-  #     - Defaults to mice's standard method otherwise
-  # - Replaces missing values in the original dataset
-  # - Returns the updated dataset
+  #' Perform multiple imputation using mice package
+  #' 
+  #' @param clinical_cleaned Cleaned clinical data frame
+  #' @param selected_col Columns used in imputation model
+  #' @param missed_col Target column(s) to impute
+  #' @return Data frame with imputed missing values
   
-  
-  # Extract relevant variables for imputation
+  # Extract relevant variables
   df_miss <- clinical_cleaned[, selected_col]
   
-  # Show missing data pattern
-  md.pattern(df_miss)
-  
-  # Initialize imputation method for each column
+  # Set imputation methods
   methods <- make.method(df_miss)
-  
-  # Assign specific imputation methods for each missed_col
   for (col in missed_col) {
     if (col %in% c("grade", "TNM_T", "TNM_N")) {
-      methods[col] <- "polr"     # Ordered categorical
+      methods[col] <- "polr"
     } else if (col %in% c("er", "TNM_M", "Chemotherapy_Adjuvant", "MMR_Status", "KRAS_Mutation")) {
-      methods[col] <- "logreg"   # Binary categorical
-    } else {
-      methods[col] <- ""         # Let mice choose default method
+      methods[col] <- "logreg"
     }
   }
   
-  # Perform multiple imputation
+  # Perform imputation
   imp <- mice(df_miss, m = 20, method = methods, seed = 123)
   
-  # # Define custom mode function for majority voting
+  # Majority vote function
   Mode <- function(x) {
     ux <- unique(x)
     ux[which.max(tabulate(match(x, ux)))]
   }
-   
-  # # # Replace missing values for each target column
-  # for (col in missed_col) {
-  #   if (!is.null(imp$imp[[col]]) && nrow(imp$imp[[col]]) > 0) {
-  #     filled_values <- apply(imp$imp[[col]], 1, Mode)
-  #     print(paste("Filling column:", col))
-  #     print(filled_values)
-  #     clinical_cleaned[[col]][names(filled_values)] <- filled_values
-  #     #clinical_cleaned[[col]][as.numeric(names(filled_values))] <- filled_values
-  #   }
-  # # }
-  # # 
   
-  
+  # Replace missing values
   for (col in missed_col) {
     tbl <- imp$imp[[col]]
-    # skip if no imputations for this column
     if (is.null(tbl) || nrow(tbl) == 0) next
     
-    # row-wise mode across m imputations -> one value per missing row
-    filled_values <- apply(tbl, 1, Mode)  # named vector; names are IDs (GSM...)
-    ids  <- names(filled_values)
-    
-    # map IDs to row positions
+    filled_values <- apply(tbl, 1, Mode)
+    ids <- names(filled_values)
     idx <- match(ids, rownames(clinical_cleaned))
     keep <- !is.na(idx) & !is.na(filled_values)
-    if (!any(keep)) next
     
-    vals <- filled_values[keep]
-    pos  <- idx[keep]
-    
-    # assign safely depending on column type
-    if (is.factor(clinical_cleaned[[col]])) {
-      # expand levels to include new values
-      new_levels <- union(levels(clinical_cleaned[[col]]), unique(vals))
-      clinical_cleaned[[col]] <- factor(clinical_cleaned[[col]], levels = new_levels)
+    if (any(keep)) {
+      vals <- filled_values[keep]
+      pos <- idx[keep]
       clinical_cleaned[[col]][pos] <- vals
-    } else if (is.character(clinical_cleaned[[col]])) {
-      clinical_cleaned[[col]][pos] <- as.character(vals)
-    } else if (is.numeric(clinical_cleaned[[col]])) {
-      suppressWarnings({
-        num_vals <- as.numeric(vals)
-      })
-      ok <- !is.na(num_vals)
-      clinical_cleaned[[col]][pos[ok]] <- num_vals[ok]
-    } else {
-      # fallback: coerce to character, assign, then factor back if needed
-      tmp <- as.character(clinical_cleaned[[col]])
-      tmp[pos] <- as.character(vals)
-      clinical_cleaned[[col]] <- tmp
     }
   }
-  return(clinical_cleaned)
-  }
   
+  return(clinical_cleaned)
+}
+
+
+
+
+
 
 impute_fit_apply <- function(train_df, test_df, selected_col, missed_col, m = 20) {
   # 仅选择参与插补的列
@@ -229,7 +284,7 @@ impute_fit_apply <- function(train_df, test_df, selected_col, missed_col, m = 20
   df_all <- rbind(train_sel, test_sel)
   is_test <- grepl("^test_", rownames(df_all))
   
-  # 指定插补方法（与你原来的规则一致）
+  
   methods <- make.method(df_all)
   for (col in missed_col) {
     if (col %in% c("grade", "TNM_T", "TNM_N")) {
@@ -313,6 +368,114 @@ impute_fit_apply <- function(train_df, test_df, selected_col, missed_col, m = 20
   list(train = out_train, test = out_test)
 }
 
+
+#####
+#' 
+#' impute_fit_apply <- function(train_df, test_df, selected_col, missed_col, m = 20) {
+#'   #' Impute Missing Values using MICE with Train-Test Separation
+#'   #'
+#'   #' This function handles missing data by:
+#'   #' 1. Using training data to fit MICE imputation models
+#'   #' 2. Applying the fitted models to both training and test data
+#'   #' 3. Maintaining separation between train and test sets to prevent data leakage
+#'   #' 4. Providing fallback imputation (median/mode) for any remaining missing values
+#'   #'
+#'   #' @param train_df Training data frame
+#'   #' @param test_df Test data frame  
+#'   #' @param selected_col Columns to use for imputation modeling
+#'   #' @param missed_col Columns with missing values to be imputed
+#'   #' @param m Number of multiple imputations (default: 20)
+#'   #' @return List containing imputed train and test data frames
+#'   
+#'   # Select only columns involved in imputation
+#'   train_sel <- train_df[, selected_col, drop = FALSE]
+#'   test_sel  <- test_df[,  selected_col, drop = FALSE]
+#'   
+#'   # Combine and identify source (for mice to backfill)
+#'   rownames(train_sel) <- paste0("train_", seq_len(nrow(train_sel)))
+#'   rownames(test_sel)  <- paste0("test_",  seq_len(nrow(test_sel)))
+#'   df_all <- rbind(train_sel, test_sel)
+#'   is_test <- grepl("^test_", rownames(df_all))
+#'   
+#'   # Specify imputation methods (consistent with your original rules)
+#'   methods <- make.method(df_all)
+#'   for (col in missed_col) {
+#'     if (col %in% c("grade", "TNM_T", "TNM_N")) {
+#'       methods[col] <- "polr"
+#'     } else if (col %in% c("er", "TNM_M", "Chemotherapy_Adjuvant", "MMR_Status", "KRAS_Mutation")) {
+#'       methods[col] <- "logreg"
+#'     } else {
+#'       methods[col] <- ""
+#'     }
+#'   }
+#'   
+#'   # Fit only on training rows; apply to test rows only (ignore)
+#'   imp <- mice(df_all, m = m, method = methods, ignore = is_test, printFlag = FALSE)
+#'   
+#'   # Majority vote function (to aggregate m imputations into a single value)
+#'   Mode <- function(x) {
+#'     x <- x[!is.na(x)]
+#'     if (!length(x)) return(NA)
+#'     ux <- unique(x)
+#'     ux[which.max(tabulate(match(x, ux)))]
+#'   }
+#'   
+#'   # Backfill mice results (single value)
+#'   df_all_imp <- df_all
+#'   for (col in missed_col) {
+#'     tbl <- imp$imp[[col]]
+#'     if (is.null(tbl) || nrow(tbl) == 0) next
+#'     vals <- apply(tbl, 1, Mode)
+#'     idx  <- match(names(vals), rownames(df_all_imp))
+#'     keep <- !is.na(idx) & !is.na(vals)
+#'     if (!any(keep)) next
+#'     
+#'     pos <- idx[keep]
+#'     if (is.factor(df_all_imp[[col]])) {
+#'       df_all_imp[[col]][pos] <- vals[keep]
+#'     } else if (is.character(df_all_imp[[col]])) {
+#'       df_all_imp[[col]][pos] <- as.character(vals[keep])
+#'     } else if (is.numeric(df_all_imp[[col]])) {
+#'       suppressWarnings({ num_vals <- as.numeric(vals[keep]) })
+#'       ok <- !is.na(num_vals)
+#'       df_all_imp[[col]][pos[ok]] <- num_vals[ok]
+#'     } else {
+#'       tmp <- as.character(df_all_imp[[col]])
+#'       tmp[pos] <- as.character(vals[keep])
+#'       df_all_imp[[col]] <- tmp
+#'     }
+#'   }
+#'   
+#'   # Split back to train/test (only selected_col)
+#'   train_imp <- df_all_imp[!is_test, , drop = FALSE]
+#'   test_imp  <- df_all_imp[ is_test, , drop = FALSE]
+#'   
+#'   # Training-set driven fallback: median/mode
+#'   for (col in colnames(train_imp)) {
+#'     x_train <- train_imp[[col]]
+#'     
+#'     if (is.numeric(x_train)) {
+#'       stat <- median(x_train, na.rm = TRUE)
+#'       if (anyNA(train_imp[[col]])) train_imp[[col]][is.na(train_imp[[col]])] <- stat
+#'       if (anyNA(test_imp[[col]]))  test_imp[[col]][is.na(test_imp[[col]])]   <- stat
+#'     } else {
+#'       stat <- Mode(x_train)
+#'       if (anyNA(train_imp[[col]])) train_imp[[col]][is.na(train_imp[[col]])] <- stat
+#'       if (anyNA(test_imp[[col]]))  test_imp[[col]][is.na(test_imp[[col]])]   <- stat
+#'     }
+#'   }
+#'   
+#'   # Write back to original data frames
+#'   out_train <- train_df
+#'   out_test  <- test_df
+#'   out_train[, selected_col] <- train_imp
+#'   out_test[,  selected_col] <- test_imp
+#'   
+#'   list(train = out_train, test = out_test)
+#' }
+#' 
+
+#####
 
 align_expr_clin <- function(expr, clin, sample_col = 1) {
   # Description: This function aligns the columns of a gene expression matrix
@@ -1350,7 +1513,52 @@ repeat_cv_lasso_cox <- function(train_expr = train_expr_filtered,
 # any(is.infinite(X)) # 检查Inf
 # summary(X)
 # 
-# 
+
+
+# 重复 K 折 CV LASSO Cox，统计频率和平均系数
+repeat_cv_lasso_cox_latent <- function(df_latent = df_latent,
+                                train_clinical,
+                                repeats = 20,
+                                nfolds = 10,
+                                alpha = 1) {
+  
+  
+  X <- df_latent %>% select(-c("e_dmfs", "t_dmfs"))
+  
+  y <- Surv(df_latent$t_dmfs, df_latent$e_dmfs)
+  
+  gene_names <- colnames(X)
+  gene_counts <- setNames(rep(0, length(gene_names)), gene_names)
+  gene_coef_sum <- setNames(rep(0, length(gene_names)), gene_names)
+  
+  for (i in 1:repeats) {
+    cvfit <- cv.glmnet(X, y, family = "cox", alpha = alpha, nfolds = nfolds)
+    coef_nonzero <- as.numeric(coef(cvfit, s = "lambda.min"))
+    names(coef_nonzero) <- rownames(coef(cvfit))
+    
+    for (gene in gene_names) {
+      if (coef_nonzero[gene] != 0) {
+        gene_counts[gene] <- gene_counts[gene] + 1
+        gene_coef_sum[gene] <- gene_coef_sum[gene] + coef_nonzero[gene]
+      }
+    }
+  }
+  
+  # 转为数据框，计算频率和平均系数
+  gene_freq_df <- data.frame(
+    gene = gene_names,
+    freq = gene_counts / repeats,
+    mean_coef = ifelse(gene_counts > 0, gene_coef_sum / gene_counts, 0)
+  )
+  
+  gene_freq_df <- gene_freq_df[order(-gene_freq_df$freq, -abs(gene_freq_df$mean_coef)), ]
+  return(gene_freq_df)
+}
+
+
+
+
+
 
 clinic_repeat_cv_lasso_cox <- function(train_clinical,
                                 #significant_gene_vec= significant_gene2,
@@ -1904,3 +2112,114 @@ summarize_performance <- function(perf_list, B) {
     mean_rsf_cidx = mean_rsf_cidx
   ))
 }
+
+bootstrap_sampl_split_miss_vale_imputation <- function(expr_mat,
+                                        clinical_df
+                                        ) {
+  #' Bootstrap Sampling and Data Preparation#'
+  #' Performs bootstrap sampling, data splitting, and missing value imputation
+  #' for expression and clinical data.
+  #'
+  #' @param expr_mat Expression matrix (genes x samples)
+  #' @param clinical_df Clinical data frame (samples x variables)
+  #' @return List containing processed training and test data, or NULL if skipped
+  
+    
+  n <- ncol(expr_mat)
+  train_idx <- sample(seq_len(n), size = n, replace = TRUE)
+  test_idx <- setdiff(seq_len(n), unique(train_idx))  # OOB samples
+  
+  message(sprintf("train_idx length = %d, test_idx length = %d", 
+                  length(train_idx), length(test_idx)))
+  
+  # Skip if no OOB samples
+  if (length(test_idx) == 0) {
+    message("skipped: No OOB samples")
+    return(NULL)
+  }
+  
+  # Split data
+  train_expr <- expr_mat[, train_idx, drop = FALSE]
+  test_expr <- expr_mat[, test_idx, drop = FALSE]
+  train_clinical <- clinical_df[train_idx, , drop = FALSE]
+  test_clinical <- clinical_df[test_idx, , drop = FALSE]
+  
+  # Prepare columns for imputation
+  # remove not relevant columns for imputation
+  columns_to_remove <- c("e_dmfs", "t_dmfs", "geo_accession", "hospital")
+  selected_col <- setdiff(colnames(clinical_df), columns_to_remove)
+  missed_col <- colnames(clinical_df)[colSums(is.na(clinical_df)) > 0]
+  
+  # Apply imputation
+  res <- impute_fit_apply(
+    train_df = train_clinical,
+    test_df = test_clinical,
+    selected_col = selected_col,
+    missed_col = missed_col
+  )
+  
+  train_clinical <- res$train
+  test_clinical <- res$test
+  
+  # Validate dimensions
+  message("Sampling completed: train_expr dim = ", toString(dim(train_expr)), 
+          ", test_expr dim = ", toString(dim(test_expr)),
+          ", train_clinical dim = ", toString(dim(train_clinical)),
+          ", test_clinical dim = ", toString(dim(test_clinical)))
+  
+  # Skip if invalid dimensions
+  if (ncol(train_expr) == 0 || nrow(train_expr) == 0) {
+    message("skipped: Invalid train_expr dimensions")
+    return(NULL)
+  }
+  
+  # Count events in training set
+  events_train <- sum(train_clinical$e_dmfs)
+  
+  return(list(
+    train_expr = train_expr,
+    test_expr = test_expr,
+    train_clinical = train_clinical,
+    test_clinical = test_clinical,
+    events_train = events_train
+  ))
+}
+
+# data_prepare_result <- bootstrap_sampl_split_miss_vale_imputation(expr_mat, clinical_df)
+# 
+# if (is.null(data_prepare_result)) {
+#   
+# }
+
+filter_genes_by_mad <- function(train_expr, test_expr, quantile_cutoff = 0.1) {
+  #' Filter Genes by MAD (Median Absolute Deviation)  #'
+  #' Filters genes based on MAD threshold, keeping top 90% most variable genes.  #'
+  #' @param train_expr Training expression matrix (genes x samples)
+  #' @param test_expr Test expression matrix (genes x samples)
+  #' @param quantile_cutoff Quantile cutoff for MAD filtering (default: 0.1)
+  #' @return List containing filtered train and test expression matrices, or NULL if no genes pass filter
+  
+  # Calculate MAD for each gene
+  mad_train_expr <- apply(train_expr, 1, mad)
+  
+  # Determine cutoff value
+  cutoff <- quantile(mad_train_expr, quantile_cutoff)
+  
+  # Identify genes to keep (top 90% most variable)
+  keep_mad <- mad_train_expr > cutoff
+  
+  message(sprintf("MAD filtering completed: %d genes retained, cutoff = %.4f", 
+                  sum(keep_mad), cutoff))
+  
+  # Filter both train and test matrices
+  train_expr2 <- train_expr[keep_mad, , drop = FALSE]
+  test_expr2 <- test_expr[keep_mad, , drop = FALSE]
+  
+  return(list(
+    train_expr = train_expr2,
+    test_expr = test_expr2
+  ))
+}
+# filtered_data <- filter_genes_by_mad(train_expr, test_expr, 0.25)
+# train_expr2 <- filtered_data$train_expr
+# test_expr3 <- filtered_data$test_expr
