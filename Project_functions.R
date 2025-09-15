@@ -108,7 +108,7 @@ generate_box_plots <- function(data, continuous_variables) {
 
 
 
-library(mice)
+
 # Define the imputation function
 # impute_missing_value <- function(clinical_cleaned, selected_col, missed_col) {
 #   # Description:
@@ -729,9 +729,6 @@ fit_cox_model <- function(predictors, df) {
     )
   })
 }
-
-
-
 
 
 # fit_cox_model <- function(predictors, df) {

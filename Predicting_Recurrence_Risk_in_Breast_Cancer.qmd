@@ -1,5 +1,5 @@
 ---
-title: "Predicting_Recurrence_Risk_in_Breast_Cancer"
+title: "Comparative Modeling Approaches for Breast Cancer Prognosis --- From Gene Selection with LASSO to PCA and VAE-Based Dimensionality Reduction"
 author: "Baodong Zhang"
 editor: visual
 format:
@@ -19,9 +19,34 @@ header-includes:
 bibliography: references.bib
 ---
 
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,       
+  eval = TRUE,       
+  warning = FALSE,   
+  message = FALSE,   
+  error = FALSE,     
+  results = 'markup' 
+  )
+library(dplyr)
+library(survival)
+library(survminer)
+library(glmnet)
+library(tibble)
+library(kableExtra)
+library(mice)
+library(randomForestSRC)
+library(riskRegression) # iAUC cindex
+library(caret)
+library(pec) # iAUC cindex
+source("qmd_functions.R")
+source("Project_functions.R")
+options(scipen = 999)
+```
+
 ## Summarize
 
-The object of this project is to build a multivariable survival model that integrates clinical features and selected gene expression profiles to predict long-term recurrence risk in breast cancer patients. Three models have been developed and compared: A clinical-only model; A gene expression-only model; A combined multi-modal model. Performance has been evaluated to explore the potential improvement when combining clinical and genomic features. Under the same variables, a comparison was made between the COX model and the Random Forest survival model. Through 100 bootstrap cross validations with replacement, it was found that the COX model with pure clinic variables achieved the optimal value of 0.61 in terms of average iAUC.In 100 iterations of the COX model with pure clinic variables, the model with the best performance of iAUC+C-index was selected as the final model for future prediction.
+This project explored multiple approaches for predicting distant recurrence-free survival in breast cancer using genomic data. Starting with over 20,000 genes, univariate Cox regression identified 800+ candidates, which were further reduced to 40 genes using LASSO-Cox. The study compared model performance across (i) clinical variables alone, (ii) clinical variables plus 40 genes, and (iii) 40 genes alone, using both Cox and random survival forest models. Dimensionality reduction methods were also tested, including PCA and a variational autoencoder (VAE) applied to the 800 genes, with latent variables subsequently modeled via Cox regression. Extensive bootstrap cross-validation was employed to evaluate models by mean iAUC and c-index across iterations. Data preprocessing included MICE imputation for missing clinical values, z-score normalization of gene data, and strict separation of training and validation sets to prevent data leakage. Through 100 bootstrap cross validations with replacement, it was found that the COX model with pure clinic variables achieved the optimal value of 0.61 in terms of average iAUC. In 100 iterations of the COX model with pure clinic variables, the model with the best performance of iAUC+C-index was selected as the final model for future prediction.
 
 ## Introduction
 
@@ -36,30 +61,10 @@ Clinical variables include age, tumor grade, estrogen receptor status (ER status
 The gene expression data were obtained using microarray technology and comprise 22,283 variables. The target variables include: Recurrence status: A binary variable indicating whether the patient experienced disease recurrence (yes/no). Time to recurrence: The duration from treatment to the occurrence of disease recurrence, measured in days. For patients who did not experience recurrence, the last known recurrence-free time was recorded (i.e., right-censored data).
 
 ```{r}
-#| echo: false
-#| #| warning: false
-library(dplyr)
-library(survival)
-library(survminer)
-library(glmnet)
-library(tibble)
-library(kableExtra)
+
 expr <- readRDS("expr_7390.RDS")
 clinical <- readRDS("clinical_7390.rds")
-
-
-# 
-subset_tibble <- as_tibble(expr[1:5, 1:5], rownames = "Probe_ID")
-# convert a table into a kable function
-kable_table_func <- function(df, title){
-  kable(df, format = "latex", caption = title) %>%
-  kable_styling(
-    latex_options = c("striped", "hold_position"),
-    full_width = FALSE,
-    position = "center"
-  ) %>%
-  row_spec(0, bold = TRUE, background = "#D3D3D3")
-}
+#subset_tibble <- as_tibble(expr[1:5, 1:5], rownames = "Probe_ID")
 
 # process clinical data
 clinical$time <- as.numeric(clinical$`t.dmfs:ch1`)
@@ -67,10 +72,8 @@ clinical$status <- as.numeric(clinical$`e.dmfs:ch1`)
 
 clinical_selected <- clinical[, c(
   "geo_accession",
-  "t.dmfs:ch1", "e.dmfs:ch1",
-  #"t.os:ch1", "e.os:ch1",
-  #"t.rfs:ch1", "e.rfs:ch1",
-  #"t.tdm:ch1", "e.tdm:ch1",
+  "t.dmfs:ch1",
+  "e.dmfs:ch1",
   "age:ch1",
   "er:ch1",
   "grade:ch1",
@@ -89,11 +92,12 @@ clinical_cleaned <- as.data.frame(lapply(clinical_selected, function(x) {
   if (all(is.na(x_num))) x else x_num
 }))
 
-for (i in 10:ncol(clinical_cleaned)) {
-  if (length(unique(clinical_cleaned[, i])) <= 4) {
-    clinical_cleaned[, i] <- factor(clinical_cleaned[, i])
-  }
-}
+# convert to vectors
+# for (i in 4:ncol(clinical_cleaned)) {
+#   if (length(unique(clinical_cleaned[, i])) <= 4) {
+#     clinical_cleaned[, i] <- factor(clinical_cleaned[, i])
+#   }
+# }
 
 clinical_cleaned_7390 <- clinical_cleaned %>%
   select(geo_accession, t_dmfs, e_dmfs, age, er, grade, size, hospital)
@@ -109,64 +113,16 @@ kable_table_func(head(clinical_cleaned_7390, 5), "Table 2: Subset of Clinical Da
 Clean clinical data: handle missing values and outliers
 
 ```{r}
-#| echo: false
-#| #| warning: false
-#| 
-generate_box_plots_base <- function(data, continuous_variables) {
-  #'
-  #' Generate box plots using base R graphics
-  #'
-  
-  for (var in continuous_variables) {
-    # Remove NA values
-    var_data <- na.omit(data[[var]])
-    
-    par(mar = c(3, 4, 3, 2))  # Set margins
-    boxplot(var_data,
-            col = "lightblue",
-            main = paste("Boxplot of", var),
-            ylab = var,
-            cex.main = 0.8,
-            cex.lab = 0.8,
-            outcol = "red",
-            outpch = 19,
-            cex = 0.6)
-    
-    grid(nx = NA, ny = NULL, lwd = 0.2)
-  }
-}
-
 
 numeric_vars <- names(clinical_cleaned_7390)[sapply(clinical_cleaned_7390, is.numeric)]
-generate_box_plots_base(clinical_cleaned_7390, numeric_vars)
-#value_range <- range(expr)
-#print(paste("取值范围: ", value_range[1], " 到 ", value_range[2]))
+generate_box_plots(clinical_cleaned_7390, numeric_vars)
 
 ```
 
 The box plot of clinical data shows no outliers.
 
 ```{r}
-#| echo: false
-#| #| warning: false
-max(expr)
-min(expr)
-row_means <- rowMeans(expr, na.rm = TRUE)
-row_sds <- apply(expr, 1, sd, na.rm = TRUE)
 
-# 查看这些统计量的摘要信息
-summary(row_means)
-summary(row_sds)
-
-```
-
-The value of gene expression ranges from `r min(expr)` to `r max(expr)` and has multiple decimal places. This range is typical data converted by Log2.
-
-Because in the subsequent analysis, we need to conduct survival analysis, compare the impact of different genes on prognosis and the strength of their effects, and compare the effect size (HR) of different genes on the same scale. Otherwise, the coefficient of highly expressed genes may naturally be higher. It is necessary to standardize Z-score separately for each gene.
-
-```{r}
-#| echo: false
-#| #| warning: false
 # Detect and define factor variables appropriately:
 for (i in 4:7) {
  if (length(unique(clinical_cleaned_7390[, i])) <= 4) {
@@ -174,96 +130,548 @@ for (i in 4:7) {
  }
 }
 
-colSums(is.na(clinical_cleaned_7390))
-```
-In clinical data, only the grade column has two missing values. Since the grade column is a factor and the level is 3, the "polr" method in mice is used to interpolate the missing values multiple times, and the Majority vote value is selected as the final interpolated value.
+na_info <- colSums(is.na(clinical_cleaned_7390))
+na_info <- na_info[na_info > 0]
 
+# 以数据框形式显示
+na_df <- data.frame(
+  Column = names(na_info),
+  NA_Count = as.numeric(na_info),
+  row.names = NULL
+)
+na_df$Class <- "factors level > 2"
+na_df$Mice_Method <- "polyreg"
+kable_table_func(na_df, "Table 3: NA Audit Report")
 
-```{r}
-#| echo: false
-#| #| warning: false
-library(mice)
-
-impute_missing_value <- function(clinical_cleaned, selected_col, missed_col) {
-  #' Perform multiple imputation using mice package
-  #' 
-  #' @param clinical_cleaned Cleaned clinical data frame
-  #' @param selected_col Columns used in imputation model
-  #' @param missed_col Target column(s) to impute
-  #' @return Data frame with imputed missing values
-  
-  # Extract relevant variables
-  df_miss <- clinical_cleaned[, selected_col]
-  
-  # Set imputation methods
-  methods <- make.method(df_miss)
-  for (col in missed_col) {
-    if (col %in% c("grade", "TNM_T", "TNM_N")) {
-      methods[col] <- "polr"
-    } else if (col %in% c("er", "TNM_M", "Chemotherapy_Adjuvant", "MMR_Status", "KRAS_Mutation")) {
-      methods[col] <- "logreg"
-    }
-  }
-  
-  # Perform imputation
-  imp <- mice(df_miss, m = 20, method = methods, seed = 123)
-  
-  # Majority vote function
-  Mode <- function(x) {
-    ux <- unique(x)
-    ux[which.max(tabulate(match(x, ux)))]
-  }
-  
-  # Replace missing values
-  for (col in missed_col) {
-    tbl <- imp$imp[[col]]
-    if (is.null(tbl) || nrow(tbl) == 0) next
-    
-    filled_values <- apply(tbl, 1, Mode)
-    ids <- names(filled_values)
-    idx <- match(ids, rownames(clinical_cleaned))
-    keep <- !is.na(idx) & !is.na(filled_values)
-    
-    if (any(keep)) {
-      vals <- filled_values[keep]
-      pos <- idx[keep]
-      clinical_cleaned[[col]][pos] <- vals
-    }
-  }
-  return(clinical_cleaned)
-}
-
-clinical_cleaned_7390 <- impute_missing_value(clinical_cleaned_7390, selected_col= c("age", "er", "grade", "size"), missed_col = "grade")
-
-hospital_counts <- table(clinical_cleaned_7390$hospital)
 ```
 
-There are `r length(unique(clinical_cleaned_7390$hospital))` hospitals in the clinical data. Because the ggsurvplot 显示这些医院的Kaplan-Meier生存曲线没有重合而且log rank test 显示p = 0.1 所以后续需要考虑这些医院带来的随机效应。
+Handling missing values in clinical data.
 
+The clinical dataset exhibited missingness exclusively in the grade column, with two incomplete observations. As grade represents an ordinal factor variable with three levels, multiple imputation was performed using the proportional odds logistic regression ("polr") method within the MICE framework. The final imputed values were derived through majority voting across the multiply imputed datasets.
+
+To prevent data leakage, the MICE algorithm was trained solely on the training subset. The validation set was subsequently imputed using the parameters estimated from the training data, thereby preserving the validation set's integrity for unbiased model performance assessment.
 
 ```{r}
-#| echo: false
-#| #| warning: false
-library(survminer)
-fit <- survfit(Surv(t_dmfs, e_dmfs) ~ hospital, data = clinical_cleaned_7390)
-ggsurvplot(fit, data = clinical_cleaned_7390, pval = TRUE) 
+
+clinical_cleaned_7390_imputed <- impute_missing_value(clinical_cleaned_7390, selected_col= c("age", "er", "grade", "size"), missed_col = "grade")
+hospital_counts <- table(clinical_cleaned_7390_imputed$hospital)
+
+```
+
+```{r}
+
+fit <- survfit(Surv(t_dmfs, e_dmfs) ~ hospital, data = clinical_cleaned_7390_imputed)
+ggsurvplot(fit, data = clinical_cleaned_7390_imputed, pval = TRUE) 
 
 
-library(coxme)
-# 示例代码
-coxph_model <- coxme(Surv(time = t_dmfs, event = e_dmfs) ~ age + er + grade + size + (1 | hospital), data = clinical_cleaned_7390)
-summary(coxph_model)
+# library(coxme)
+# coxph_model <- coxme(Surv(time = t_dmfs, event = e_dmfs) ~ age + er + grade + size + (1 | hospital), data = clinical_cleaned_7390)
+# summary(coxph_model)
 
-coxph_pur <- coxph(Surv(time = t_dmfs, event = e_dmfs) ~ age + er + grade + size , data = clinical_cleaned_7390)
+coxph_pur <- coxph(Surv(time = t_dmfs, event = e_dmfs) ~ age + er + grade + size , data = clinical_cleaned_7390_imputed)
 summary(coxph_pur)
 
 
 ```
 
+There are `r length(unique(clinical_cleaned_7390$hospital))` hospitals in the clinical dataset. The Kaplan-Meier survival curves generated by ggsurvplot demonstrate partially overlapping patterns across these hospitals, and the log-rank test yields a p-value of 0.1. While this suggests some degree of heterogeneity in survival outcomes among different hospital sites, the p-value \> 0.05 indicates that the observed differences are not statistically significant at the conventional alpha level of 0.05. Given the limited sample size and the lack of statistical significance, the random effects associated with hospital variation will not be considered as a primary focus in subsequent analyses.
+
 ```{r}
-#| echo: false
-#| #| warning: false
-library(dplyr)
+
+max(expr)
+min(expr)
+row_means <- rowMeans(expr, na.rm = TRUE)
+row_sds <- apply(expr, 1, sd, na.rm = TRUE)
+
+summary(row_means)
+summary(row_sds)
+
+```
+
+Handling gene data。
+
+```{r}
+set.seed(92000028)
+expr_mat <- expr
+clinical_df <- clinical_cleaned_7390
+data_prepare_result <- bootstrap_sampl_split_miss_vale_imputation(expr_mat, clinical_df)
+train_expr <- data_prepare_result$train_expr
+test_expr <- data_prepare_result$test_expr
+train_clinical <- data_prepare_result$train_clinical
+test_clinical <- data_prepare_result$test_clinical
+events_train <- data_prepare_result$events_train
+
+# quality check
+test_clinical_unimputed = clinical_df %>% filter( geo_accession %in% test_clinical$geo_accession)
+setdiff(test_clinical_unimputed, test_clinical)
+setdiff(test_clinical, test_clinical_unimputed)
+# MAD filter
+quantile_cutoff = 0.25
+filtered_data <- filter_genes_by_mad(train_expr, test_expr, quantile_cutoff)
+train_expr2 <- filtered_data$train_expr
+test_expr2 <- filtered_data$test_expr
+
+```
+
+The value of gene expression ranges from `r min(expr)` to `r max(expr)` and has multiple decimal places. This range is typical data converted by Log2.
+
+Through bootstrap sampling with replacement, train-test splitting was performed alongside multiple imputation of clinical data. For genomic data, Median Absolute Deviation (MAD) filtering was applied to remove genes with minimal expression variation in the training set. Genes demonstrating the highest `r 1-quantile_cutoff` of expression variability are retained for subsequent analysis. Gene quantity was reduced from `r nrow(expr_mat)` to `r nrow(train_expr2)` after preprocessing. The validation set retained the identical gene subset to ensure analytical consistency and prevent data leakage.
+
+```{r}
+kable_table_func(train_clinical[1:5,], "Table 4: Training set samples for clinical data")
+kable_table_func(train_expr2[1:5, 1:5], "Table 5: Training set samples for gene expression data")
+```
+
+Performinf univariate cox regression to select significant genes:
+
+The Cox proportional hazards model is a semi-parametric regression model used in survival analysis to examine the relationship between survival time and one or more predictor variables. The model specification is:
+
+$$
+h(t|X) = h_0(t) \times \exp(\beta_1X_1 + \beta_2X_2 + \cdots + \beta_pX_p)
+$$
+
+where:
+
+-   $h(t|X)$ is the hazard function at time $t$ given covariates $X$
+-   $h_0(t)$ is the baseline hazard function\
+-   $\exp(\beta_iX_i)$ represents the hazard ratio for each covariate
+
+```{r}
+    sig_gene_df <- batch_univariate_cox_regression(train_expr2, train_clinical, p_value = 0.05)
+    message(sprintf("Univariate cox regression finished, significant genes = %d", if (is.null(sig_gene_df)) 0 else nrow(sig_gene_df)))
+
+```
+
+Univariate Cox proportional hazards regression was performed individually for each gene, with significantly associated genes (Wald test p-value \< 0.05) subsequently identified and compiled into a results table.
+
+```{r}
+
+sig_gene_df <- sig_gene_df %>%
+  select(gene, everything()) %>%
+  remove_rownames()
+
+kable_table_func(head(sig_gene_df, 5), "Table 6: Univariate_Cox_Significant_Genes_Table (top 5)")
+```
+
+Conducted LASSO Cox proportional hazards regression for further refinement of gene selection. Lasso (Least Absolute Shrinkage and Selection Operator) Cox regression is a regularized version of the Cox proportional hazards model that incorporates L1 penalty for simultaneous variable selection and coefficient estimation in survival analysis.
+
+### Mathematical Formulation
+
+The objective function combines partial likelihood with L1 penalty:
+
+$$
+\min_{\beta} \left[ -\frac{1}{n} \ell(\beta) + \lambda \sum_{j=1}^{p} |\beta_j| \right]
+$$
+
+**where:**
+
+-   `$\ell(\beta)$` = partial likelihood of the Cox model
+-   `$\lambda$` = regularization parameter controlling shrinkage
+-   `$\sum_{j=1}^{p} |\beta_j|$` = L1 penalty term
+
+The Lasso Cox survival modeling is to evaluate the prognostic impact of different genes/clinical variables and the relative strength of their effects. It is essential to compare effect sizes (hazard ratios) on a common scale. Therefore, Z-score normalization was applied individually to each gene and numerical clinical variable. Additional feature selection was performed using remove_high_corr_genes function with a correlation coefficient cutoff of 0.90 to address multicollinearity among predictors. To similarly prevent information leakage, the validation set was standardized utilizing the mean and standard deviation parameters calculated solely from the training dataset.
+
+```{r}
+
+# prepare data for Lasso Cox regression
+significant_gene <- sig_gene_df$gene
+train_expr_scaled <- standardize_with_train(gene_mat_train = train_expr2,
+                                                gene_mat_valid = train_expr2,
+                                                significant_gene = significant_gene)
+
+
+train_expr_filtered <- remove_high_corr_genes(train_expr_scaled, cutoff = 0.90)
+message("Correlation-based filtering completed: train_expr_filtered dimensions = ", 
+        paste(dim(train_expr_filtered), collapse = " x "))
+
+significant_gene2 <- rownames(train_expr_filtered)
+message(sprintf("Successfully extracted filtered gene set, significant_gene2 contains %d features", 
+                length(significant_gene2)))
+
+# Normalize test set gene expression data using training set parameters
+test_expr_scaled <- standardize_with_train(gene_mat_train = train_expr2,
+                                           gene_mat_valid = test_expr2,
+                                           significant_gene = significant_gene2)
+
+kable_table_func((test_expr_scaled %>% 
+   as.data.frame() %>% 
+   rownames_to_column("gene"))[1:5, 1:5], "Table 8: Scaled/aligned test set samples for gene expression data")
+
+# Normalized clinical data
+columns_to_remove <- c("e_dmfs", "t_dmfs", "geo_accession", "hospital")
+numeric_columns <- train_clinical %>%
+      select(where(is.numeric)) %>%
+      colnames
+numeric_columns <- setdiff(numeric_columns, columns_to_remove)
+
+train_clinical_scaled <- standardize_with_train_clinical(train_clinical,
+                                                             train_clinical,
+                                                             scale_cols = numeric_columns)
+test_clinical_scaled <- standardize_with_train_clinical(train_clinical,
+                                                            test_clinical,
+                                                            scale_cols = numeric_columns)
+
+```
+
+The LASSO Cox regression procedure incorporated repeated cross-validation to enhance the robustness of gene selection across multiple iterations.
+
+```{r}
+
+gene_freq_df <- repeat_cv_lasso_cox(train_expr = train_expr_filtered,
+                                        train_clinical,
+                                        significant_gene_vec = significant_gene2,
+                                        repeats = 5,
+                                        nfolds = 10,
+                                        alpha = 1)
+message(sprintf("LASSO Cox finished"))
+```
+
+```{r}
+min_epv <- 5 
+min_freq <- 0.8
+```
+
+The resulting genes were prioritized based on selection frequency and mean coefficient magnitude, with a retention threshold set at ≥ `r min_freq` frequency.
+
+Regarding sample size considerations, Peduzzi et al. (1995, J Clin Epidemiol) initially proposed a conservative requirement of 10 events per variable (EPV) for Cox regression. Vittinghoff & McCulloch (2007, Am J Epidemiol) later demonstrated that 5–9 EPV may be sufficient for many analytical scenarios. Consistent with the latter guidelines and considering the cohort size limitations, an EPV threshold of `r min_epv` was implemented for additional feature selection.
+
+```{r}
+
+gene_freq_df_best <- gene_freq_df %>%
+      filter(freq >= min_freq)
+
+max_vars_allowed <- floor(events_train / min_epv)
+
+selected_gene_df <- gene_freq_df[1:min(nrow(gene_freq_df_best), max_vars_allowed), ] %>%
+      mutate(coef = mean_coef)
+#Cross_Validation_Consensus_Genes_Frequency_Threshold_80_EPV_5
+
+kable_table_func(selected_gene_df, "Table 9: Multi_Iteration_LASSO_Genes_Selection_Frequency_0.8_EPV_5")
+
+
+```
+
+The risk score for patient will be calculated as:
+
+The risk score is calculated as:
+
+$$
+\text{risk score} = \beta_1 x_1 + \beta_2 x_2 + \dots + \beta_i x_i + \dots + \beta_p x_p
+$$ where: - $\beta_i$ represents the coefficient for each variable - $x_i$ represents the value of each predictor variable - $p$ is the total number of variables in the model
+
+```{r}
+result <- compute_risk_score_train_2(
+      gene_mat_scaled  = train_expr_filtered,
+      significant_vars_df = selected_gene_df,
+      clinical_cleaned = train_clinical_scaled
+      )
+
+clinical_cleaned_risk_train <- result$merged_df
+median_cut_train <- result$median_cut
+
+clinical_cleaned_risk_test <- compute_risk_score_test_2(
+  gene_mat_scaled = test_expr_scaled,
+  significant_vars_df = selected_gene_df,
+  clinical_cleaned = test_clinical_scaled,
+  median_cut_train)
+    
+
+clinical_cleaned_risk_test$group_var <- as.factor(clinical_cleaned_risk_test[["risk_group"]])
+  
+surv_obj <- Surv(time = clinical_cleaned_risk_test$t_dmfs, 
+                   event = clinical_cleaned_risk_test$e_dmfs)
+  
+  
+# Fit survival model
+fit <- survfit(surv_obj ~ risk_group, data = clinical_cleaned_risk_test)
+  
+# Create survival plot
+ggsurvplot(
+  fit,
+  data = clinical_cleaned_risk_test,
+  pval = TRUE,
+  conf.int = TRUE,
+  risk.table = TRUE,
+  xlab = "Days",
+  ylab = "Survival Probability",
+  palette = "Set1"
+  )
+  
+surv_diff <- survdiff(surv_obj ~ group_var, data = clinical_cleaned_risk_test)
+p_value <- 1 - pchisq(surv_diff$chisq, length(surv_diff$n) - 1)
+cat("Log-rank Kaplan-Meier test p-value:", p_value, "\n")
+
+```
+
+Following the identification of significant genes, subsequent modeling will employ two distinct algorithms: a Cox proportional hazards model and a Random Survival Forest model.
+
+Cox proportional hazards model
+
+During the fitting of a Cox model, for instance, if a specific gene expression is present in all patients who died within the first year but absent in all patients who survived beyond five years, the model will assign an extremely large coefficient to this variable, resulting in an exceptionally high concordance index. To account for the potential presence of (quasi-)complete separation and divergent coefficients, thresholds using `min_concord` and `coef_max` have been implemented . If the model's overall concordance exceeds `min_concord` (e.g., 0.97) **or** if any coefficient in the model is greater than `coef_max` (e.g., 10), the model will be rejected.
+
+```{r}
+
+columns_to_remove2 <- c("risk_group", "risk_score", "e_dmfs", "t_dmfs") #, 
+
+character_columns <- clinical_cleaned_risk_train %>%
+  select(where(is.character)) %>%
+  colnames()
+
+# columns_with_digits <- clinical_cleaned_risk_train %>%
+#   select(matches("\\d")) %>%
+#   names()
+      
+predictors <- colnames(clinical_cleaned_risk_train) %>%
+  setdiff(c(columns_to_remove2, character_columns)) # , columns_with_digits
+
+df <- clinical_cleaned_risk_train %>%
+  select(c(predictors, "t_dmfs", "e_dmfs"))
+# fit cox
+results_train <- fit_cox_model(predictors, df)
+
+full_cox_result <- results_train$coef_table
+
+kable_table_func(full_cox_result, "Table 10: Full Cox Model Analysis Summary")
+
+full_cox_ph_test <- results_train$ph_test
+
+kable_table_func(full_cox_ph_test, "Table 11: Full Cox Model Proportional Hazards")
+
+#print(full_cox_ph_test)
+
+ph_plots <- ggcoxzph(results_train$ph_test)
+print(ph_plots[[1]])
+print(ph_plots[[2]])
+print(ph_plots[[3]])
+print(ph_plots[[4]])
+print(ph_plots[[5]])
+
+coef_max <- 10
+min_concord <- 0.97
+
+
+# detection of divergent coefficients in the Cox model
+if (any(abs(coef(results_train$model)) > coef_max)) {
+  message(sprintf("coef > %0.1f detected", coef_max))
+      }
+message("Cox divergent coefficients detection is finished")
+      
+# detection of (quasi-)complete separation
+concordance_val <- tryCatch({
+  suppressWarnings(summary(results_train$model)$concordance[1])
+  }, error = function(e) NA)
+
+message(sprintf("Detection of (quasi-)complete separation is finished ，concordance_val = %.4f", if (is.na(concordance_val)) NA else concordance_val))
+      
+if (!is.na(concordance_val) && concordance_val >= min_concord) {
+        message(sprintf("Concordance >= %f detected ", min_concord))
+      }
+
+# Clinical-only COX
+predictors_cli <- predictors[1:4]
+results_train_cli <- fit_cox_model(predictors_cli, df)
+```
+
+Random Survival Forest model
+
+Random Survival Forest (RSF) is an extension of the Random Forest method to the survival analysis domain.It consists of many survival trees, built using bootstrap samples and random feature selection at each split. Splitting rule: Instead of maximizing information gain (e.g., Gini index or entropy in classification), survival trees use the log-rank test to find the feature and split point that best separate survival outcomes. Leaf output: - Standard random forests → class label (classification) or numeric value (regression). RSF → cumulative hazard function (CHF), Ensemble prediction: - Each tree provides a CHF (H(t)). The forest averages them to obtain $H_{\text{avg}}(t)$ and convert to a survival function:\
+$$S(t) = \exp(-H_{\text{avg}}(t))$$ RSF outputs a survival curve, which gives the estimated probability of surviving beyond any time point (t). Besides individual survival prediction, RSF also supports variable importance analysis. With the library(randomForestSRC), `rfsrc(Surv(t_dmfs, e_dmfs) ~ ., data = train_data, ntree = ntree)`can be used to build the RSF model.
+
+The analysis utilized a random survival forest comprising 1,000 trees, with model training conducted through k-fold cross-validation, followed by selection of the optimal model for testing evaluation.Variable importance was determined using the full dataset.
+
+```{r}
+# Fit Random Survival Forest model
+result_rsf_train <- rsf_kfold_cv_best(data = df, K = 5, ntree = 1000)
+rsf_fit_best <- result_rsf_train$best_model
+rsf_fit_full <- rfsrc(Surv(t_dmfs, e_dmfs) ~ ., data = df, ntree = 1000)
+
+rsf_v_importance <- result_rsf_train$importance  
+kable_table_func(rsf_v_importance, "Table 12: Variable Importance from Random Survival Forest model")
+```
+
+# Model Discrimination Assessment Metrics
+
+In this study, the discriminatory power of the survival model was assessed using the **average C-index** (Concordance Index) and **average iAUC** (Integrated Area Under the Curve) obtained through repeated cross-validation.
+
+## 1. Concordance Index (C-index)
+
+### Calculation Process
+
+The C-index is calculated by randomly selecting a pair of individuals $(i, j)$. The pair is considered **concordant** if:
+
+-   Individual $i$ has an actual event time shorter than individual $j$, **and**
+-   The model assigns a higher risk score (or shorter predicted survival time) to individual $i$.
+
+### Formula
+
+The C-index represents the proportion of concordant pairs among all comparable pairs:
+
+$$
+C = \frac{\text{Number of concordant pairs}}{\text{Number of comparable pairs}}
+$$
+
+### Interpretation of Values
+
+-   $C = 0.5$ → Prediction is no better than random guessing
+-   $C = 1.0$ → Perfect discriminatory ability
+-   $0.7 \leq C < 0.8$ → Acceptable discrimination
+-   $0.8 \leq C < 0.9$ → Excellent discrimination
+-   $C \geq 0.9$ → Outstanding discrimination
+
+The C-index primarily assesses **risk ordering** but does not account for **time-dependent dynamics** in model performance.
+
+## 2. Integrated AUC (iAUC)
+
+The **iAUC** (Integrated Area Under the Curve) is the **integrated form of time-dependent AUC**. It measures a model's **discriminatory ability at different time points** and provides an **overall summary score** through integration (weighted averaging) over time.
+
+The calculation proceeds in two main steps:
+
+1.  **Compute time-dependent AUC(**$t$):
+
+    -   At a specific time point $t$, define two groups:
+
+        -   The **"event group"**: individuals who experienced the event by time $t$.
+        -   The **"non-event/survival group"**: individuals who remain event-free beyond time $t$ (including those censored after $t$).
+
+    -   Calculate the standard AUC (Area Under the ROC Curve) for classifying these two groups at time $t$ based on the model's predicted risk scores. Since the risk scores are fixed, at each time point $t$ we simply reclassify the samples into the event group and the survival group. We then compare the risk scores to see whether the Cox model correctly ranks those who experienced the event before $t$ ahead of those who survived beyond $t$.
+
+2.  **Integrate over all observed time points**: The overall iAUC is obtained by integrating the time-dependent AUC($t$) function over the entire follow-up period $[0, \tau]$:
+
+    $$
+    \text{iAUC} = \int_{0}^{\tau} \text{AUC}(t) \cdot w(t)  \, dt
+    $$
+
+    Where:
+
+    -   $\tau$ is the maximum observation time.
+    -   $w(t)$ is a weight function, often based on the **distribution of event times** or the **size of the risk set** at time $t$ to account for the varying precision of the estimate across time.
+
+### 
+
+-   $\text{iAUC} = 0.5$ → Discriminatory power equivalent to **random guessing**.
+-   $\text{iAUC} = 1.0$ → **Perfect discriminatory ability** across all time points.
+-   Values between 0.5 and 1.0 indicate the degree of predictive accuracy, with higher values representing better performance.
+
+## 3. Comparative Summary
+
+| Feature | **C-index** | **iAUC** |
+|:-----------------------|:-----------------------|:-----------------------|
+| **Summary Type** | Global, single number | **Integrated** summary over time |
+| **Perspective** | **Ranking** | **Prediction** at various time points |
+| **Handling of Time** | Implicit, based on event order | Explicit, evaluates performance at each time $t$ |
+| **Sensitivity to PH** | Less sensitive to minor violations of proportional hazards | Can be more informative if discrimination changes over time |
+| **Calculation** | Based on **comparable pairs** | Based on **time-dependent ROC curves** |
+| **Complexity** | Simpler to compute and interpret | More computationally intensive |
+
+Both the C-index and iAUC provide valuable insights into model performance: - The **C-index** offers a straightforward measure of a model's overall ability to rank patients by risk - The **iAUC** provides a more comprehensive view of time-dependent predictive performance
+
+The combination of these metrics through repeated cross-validation ensures a robust assessment of the survival model's discriminatory power.
+
+```{r}
+# prepare the test data
+
+# evaluate the full Cox model 
+result_valid <- calculate_time_auc_cindex(
+        "Cox", 
+        fitted_model = results_train$model, 
+        df = clinical_cleaned_risk_test
+      )
+
+result_valid_cox_mc <- calculate_time_auc_cindex(
+        "Cox", 
+        fitted_model = results_train_cli$model, 
+        df = clinical_cleaned_risk_test
+      )
+      
+# evaluate the Random Survival Forest model
+result_rsf_valid <- calculate_time_auc_cindex(
+  "RSF",
+  fitted_model = rsf_fit_full, #rsf_fit_best
+  df = clinical_cleaned_risk_test
+  )
+
+# model comparision
+comparison_df <- data.frame(
+  Model = c("COX Clinical-Genomic", "RSF Clinical-Genomic", "COX Clinical-only"),
+  iAUC = c(result_valid$iAUC, result_rsf_valid$iAUC, result_valid_cox_mc$iAUC),
+  C_Index = c(result_valid$c_index, result_rsf_valid$c_index, result_valid_cox_mc$c_index),
+  Sum_iAUC_Cindex = c(result_valid$iAUC, result_rsf_valid$iAUC, result_valid_cox_mc$iAUC) + c(result_valid$c_index, result_rsf_valid$c_index, result_valid_cox_mc$c_index)
+)
+
+kable(comparison_df, caption = "Table 13: Best Model Performance Comparison")
+
+saveRDS(results_train$model, "best_cox_mm_model_1470.rds")
+saveRDS(results_train_cli$model, "best_cox_mc_model_1515.rds")
+# Because PH test for Cox doesn't hold, finally rsf_fit_full is taken as finial model.
+saveRDS(rsf_fit_full, "best_rsf_model_mm_1489.rds")
+```
+
+To compare the performances of the Cox proportional hazards model and the Random Survival Forest model, Each algorithm will be trained and evaluated using three separate feature sets: an exclusive clinical variable set, an exclusive gene expression variable set, and a combined set integrating both clinical and genomic features. Through bootstrap cross validations with replacement, we calculate the everage of C_index and iAUC.
+
+```{r}
+geo_accession_7390 <- clinical_cleaned_7390$geo_accession
+expr_mat_7390 <- expr[, geo_accession_7390, drop = FALSE]
+
+# res7390_3_model4 <- run_bootstrap_validation_3_model(expr_mat = expr_mat_7390,
+#                                                      clinical_df = clinical_cleaned_7390,
+#                                                      B = 100, 
+#                                                      seed = 92000000, 
+#                                                      min_epv = 5, 
+#                                                      coef_max = 10, 
+#                                                      min_concord = 0.97)
+
+# Create a comparison dataframe
+res7390_3_model4 <- readRDS("res7390_3_model4.rds")
+
+model_comparison_mean <- data.frame(
+  Model_Type = c("Clinical-only", "Genomic-only", "Clinical-Genomic Integrated"),
+  Mean_Cox_iAUC = c(
+    res7390_3_model4$summary_results_mc$mean_cox_iAUC,
+    res7390_3_model4$summary_results_mg$mean_cox_iAUC,
+    res7390_3_model4$summary_results_mm$mean_cox_iAUC
+  ),
+  Mean_Cox_Cindex = c(
+    res7390_3_model4$summary_results_mc$mean_cox_cidx,
+    res7390_3_model4$summary_results_mg$mean_cox_cidx,
+    res7390_3_model4$summary_results_mm$mean_cox_cidx
+  ),
+  Mean_RSF_iAUC = c(
+    res7390_3_model4$summary_results_mc$mean_rsf_iAUC,
+    res7390_3_model4$summary_results_mg$mean_rsf_iAUC,
+    res7390_3_model4$summary_results_mm$mean_rsf_iAUC
+  ),
+  Mean_RSF_Cindex = c(
+    res7390_3_model4$summary_results_mc$mean_rsf_cidx,
+    res7390_3_model4$summary_results_mg$mean_rsf_cidx,
+    res7390_3_model4$summary_results_mm$mean_rsf_cidx
+  )
+)
+
+model_comparison_mean$Cox_Sum <- model_comparison_mean$Mean_Cox_iAUC + model_comparison_mean$Mean_Cox_Cindex
+model_comparison_mean$RSF_Sum <- model_comparison_mean$Mean_RSF_iAUC + model_comparison_mean$Mean_RSF_Cindex
+
+# Print the comparison table
+kable(model_comparison_mean, caption = "Table 14: Model Performance Comparision (Mean) from 100 Bootstrap Iterations") 
+
+model_summary_df <- res7390_3_model4$summary_df %>%
+  rename(model_type = model)
+model_summary_df$model_type <- c(
+  "mc (Clinical-only)",
+  "mg (Genomic-only)", 
+  "mm (Clinical-Genomic Integrated)"
+)
+
+kable(model_summary_df, caption = "Table 15: Model Best Performance from 100 Bootstrap Iterations") 
+```
+
+Across 100 bootstrap resamples, the clinical-only Cox model exhibited a slight performance advantage over the alternative models; however, its mean iAUC and mean C-index were only 0.55 and 0.52, respectively, indicating limited discriminative ability. If one were to nominate a single model for prospective prediction, the clinical-only Cox model achieved the highest combined score in bootstrap replicate 28 (Cox_iAUC + Cox_Cindex = 1.52). Nevertheless, because the proportional hazards assumption did not hold for this model (PH test), the runner-up—the clinical–genomic integrated random survival forest (RSF)— is selected as the final model.
+
+```{r}
+best_rsf_model_mm_1489 <- readRDS("best_rsf_model_1489.rds")
+```
+
+```{r}
+
 expr_df <- as.data.frame(t(expr))
 #combine gene with clinical data
 clinical_t_e <- clinical_cleaned_7390 %>% select(geo_accession, t_dmfs, e_dmfs)
@@ -274,123 +682,14 @@ merged_df <- expr_df %>%
   column_to_rownames("geo_accession")
 
 
-train_cox_with_pca <- function(data = merged_df, 
-                               time_col,
-                               status_col,
-                               clinical_cleaned_7390,
-                               train_ratio = 0.7, 
-                               variance_threshold = 0.7,
-                               seed = 12345) {
-  
-  # Load required libraries
-  library(survival)
-  library(caret)
-  
-  # Set seed for reproducibility
-  set.seed(seed)
-  
-  # Prepare feature matrix and survival data
-  features <- as.matrix(data[, !(names(data) %in% c(time_col, status_col))])
-  surv_data <- data[, c(time_col, status_col)]
-  #colnames(surv_data) <- c("time", "status")
-  
-  # Split data into training and testing sets
-  train_index <- sample(1:nrow(data), size = nrow(data), replace = TRUE)
-  all_indices <- 1:nrow(data)
-  test_index <- setdiff(all_indices, unique(train_index))
 
-  
-  train_feat <- features[train_index, ]
-  test_feat <- features[test_index, ]
-  train_surv <- surv_data[train_index,]
-  test_surv <- surv_data[test_index, ]
-  
-  # Perform PCA on training set
-  pca_train <- prcomp(train_feat, center = TRUE, scale. = TRUE)
-  pca_summary <- summary(pca_train)
-  
-  events_train <- sum(train_surv$e_dmfs)
-  max_vars_allowed <- floor(events_train / 3)
-  cumulative_variance <- pca_summary$importance[3, max_vars_allowed]  # Third row is cumulative variance
-cat("The first", max_vars_allowed, "principal components explain", 
-    round(cumulative_variance * 100, 2), "% of the variance\n")
-
-    # Determine number of PCs to reach variance threshold
-   # pve <- pca_train$sdev^2 / sum(pca_train$sdev^2)
-   # cum_pve <- cumsum(pve)
-   # n_pcs <- which(cum_pve >= variance_threshold)[1]
-  # 
-  # Get PC scores for training set
-  train_pcs <- pca_train$x[, 1:max_vars_allowed] #max_vars_allowed
-  clinical_t_e_2 <- clinical_cleaned_7390 %>% select(geo_accession, hospital)
-  
-  train_pcs2 <- as.data.frame(train_pcs) %>%
-  rownames_to_column("geo_accession") %>%
-  left_join(clinical_t_e_2, 
-            by = "geo_accession") %>%
-  column_to_rownames("geo_accession")
-  
-  # Transform test set using training PCA parameters
-  test_scaled <- scale(test_feat, center = pca_train$center, scale = pca_train$scale)
-  test_pcs <- test_scaled %*% pca_train$rotation
-  test_pcs <- test_pcs[, 1:max_vars_allowed] # n_pcs
-  test_pcs2 <- as.data.frame(test_pcs) %>%
-  rownames_to_column("geo_accession") %>%
-  left_join(clinical_t_e_2, 
-            by = "geo_accession") %>%
-  column_to_rownames("geo_accession")
-  
-  
-  # Create dataframes for modeling
-  train_df <- data.frame(train_pcs2, t_dmfs = train_surv$t_dmfs, e_dmfs = train_surv$e_dmfs)
-  test_df <- data.frame(test_pcs2, t_dmfs = test_surv$t_dmfs, e_dmfs = test_surv$e_dmfs)
-  
-  # Build COX model
-  ## COX ME model
-  cox_me_formula <- as.formula(paste("Surv(t_dmfs, e_dmfs) ~", 
-                                 paste(colnames(train_pcs), collapse = " + "),"+ (1 | hospital)"))
-  cox_me_model <- coxme(cox_me_formula, data = train_df, x = TRUE)
-  cox_me_model_summ <- summary(cox_me_model)
-  # this p value is to measue the random effect of hospital, smaller value indicates significient effect
-  cox_me_p_value <- as.data.frame(cox_me_model_summ$chi) %>% select("p")
-  
-  ## COX model
-  cox_formula <- as.formula(paste("Surv(t_dmfs, e_dmfs) ~", 
-                                 paste(colnames(train_pcs), collapse = " + ")))
-  cox_model <- coxph(cox_formula, data = train_df, x = TRUE)
-  ph_test <- cox.zph(cox_model)
-  global_ph_test <- ph_test$table[nrow(ph_test$table),3]
-  # Make predictions on test set
-  test_risk <- predict(cox_model, newdata = test_df, type = "risk")
-  
-  # Calculate performance metrics
-  #c_index <- concordance(cox_model, newdata = test_df)$concordance
-  test_result <- calculate_time_auc_cindex(model_type = "Cox", fitted_model= cox_model, df = test_df)
-  
-  # Return results
-  return(list(
-    model = cox_model,
-    train_pca = pca_train,
-    max_vars_allowed = max_vars_allowed,
-    cumulative_variance_explained = cumulative_variance,
-    c_index = test_result$c_index,
-    iAUC = test_result$iAUC,
-    total_score = test_result$c_index + test_result$iAUC,
-    global_ph_test = global_ph_test,
-    cox_me_model_summary = summary(cox_me_model),
-    cox_me_p_value = cox_me_p_value,
-    cox_model_summary = summary(cox_model)
-  ))
-}
-
-# Example usage:
-results <- train_cox_with_pca(data = merged_df, time_col = "t_dmfs", status_col = "e_dmfs", clinical_cleaned_7390, train_ratio = 0.7, variance_threshold = 0.7, seed = 12345)
 
 # Set number of iterations
 n_runs <- 100
 
 # Create empty vectors to store performance metrics for each run
 c_index_results <- numeric(n_runs)
+cox_me_cindex_results <- numeric(n_runs)
 iAUC_results <- numeric(n_runs)
 total_score_results <- numeric(n_runs)
 
@@ -417,12 +716,12 @@ for (i in 1:n_runs) {
     status_col = "e_dmfs", 
     clinical_cleaned_7390, 
     train_ratio = 0.7, 
-    variance_threshold = 0.7, 
-    seed = current_seed
+    variance_threshold = 0.7
   )
   
   # Store performance metrics
   c_index_results[i] <- results$c_index
+  cox_me_cindex_results[i] <- results$cox_me_cindex
   iAUC_results[i] <- results$iAUC
   total_score_results[i] <- results$total_score
   
@@ -443,55 +742,55 @@ for (i in 1:n_runs) {
               results$c_index, results$iAUC, results$total_score))
 }
 
+
+
 # Calculate mean and standard deviation of performance metrics
 mean_c_index <- mean(c_index_results)
 sd_c_index <- sd(c_index_results)
+mean_coxme_cindex <- mean(cox_me_cindex_results)
+sd_coxme_cindex <- sd(cox_me_cindex_results)
 mean_iAUC <- mean(iAUC_results)
 sd_iAUC <- sd(iAUC_results)
 mean_total_score <- mean(total_score_results)
 sd_total_score <- sd(total_score_results)
 
-# Output average performance results
 
-cat("=== Average Performance Over Runs ===\n")
-cat(sprintf("Mean C-index:      %.4f ± %.4f\n", mean_c_index, sd_c_index))
-cat(sprintf("Mean iAUC:         %.4f ± %.4f\n", mean_iAUC, sd_iAUC))
-cat(sprintf("Mean Total Score:  %.4f ± %.4f\n", mean_total_score, sd_total_score))
-
-# Output best run results
-cat("\n=== Best Run Results ===\n")
-cat(sprintf("Best Run ID:       %d\n", best_run_id))
-cat(sprintf("Best Seed:         %d\n", 12345 + best_run_id))
-cat(sprintf("C-index:          %.4f\n", best_results$c_index))
-cat(sprintf("iAUC:             %.4f\n", best_results$iAUC))
-cat(sprintf("Total Score:      %.4f\n", best_results$total_score))
-cat(sprintf("Number of PCs:     %d\n", best_results$max_vars_allowed))
-cat(sprintf("Cumulative Variance: %.1f%%\n", best_results$cumulative_variance_explained * 100))
-
-# Check PH test results (if interested)
-cat(sprintf("Global PH Test p-value: %.9f\n", best_results$global_ph_test))
-
-# Save best results to a variable for further analysis
-best_run_results <- best_results
-
-# Display detailed results from all runs
-cat("\n=== Performance Metrics for All Runs ===\n")
-performance_df <- data.frame(
-  Run = 1:n_runs,
-  Seed = 12345 + 1:n_runs,
-  C_Index = round(c_index_results, 4),
-  iAUC = round(iAUC_results, 4),
-  Total_Score = round(total_score_results, 4)
+pca_avg_results <- data.frame(
+  Metric = c("C-index", "CoxMe C-index", "iAUC", "Total Score"),
+  Mean   = c(mean_c_index, mean_coxme_cindex, mean_iAUC, mean_total_score),
+  SD     = c(sd_c_index, sd_coxme_cindex, sd_iAUC, sd_total_score)
 )
-#print(performance_df)
+
+kable(pca_avg_results, caption = "Table 16: PCA Cox Model Performance (Mean) from 100 Iterations") 
+
+pca_best_results_df <- data.frame(
+  Item   = c("Best Run ID", "Best Seed", "C-index", "iAUC", "Total Score",
+             "Number of PCs", "Cumulative Variance (%)", "Global PH Test p-value"),
+  Value  = c(best_run_id,
+             12345 + best_run_id,
+             best_results$c_index,
+             best_results$iAUC,
+             best_results$total_score,
+             best_results$max_vars_allowed,
+             best_results$cumulative_variance_explained * 100,
+             best_results$global_ph_test)
+)
+
+kable(pca_best_results_df, caption = "Table 17: PCA Cox Model Best Performance ") 
 
 
-
-
+saveRDS(best_results, "Best PCA_COX model.rds")
 
 ```
 
+```{r}
 
+model_comparison_mean
+model_summary_df
+#PCA
+pca_best_results_df
+pca_avg_results
+```
 
 standardization. Perform unsupervised clustering (e.g., K-means or hierarchical clustering) on gene expression data to identify potential molecular subgroups.
 
@@ -654,11 +953,6 @@ Use t-SNE or UMAP for 2D visualization of clustering patterns to aid interpretat
 
 
 ```
-
-
-
-
-
 
 Feature Selection (if proportional hazards (PH) assumption holds) Method 1: Univariate Cox analysis to identify survival-associated genes Method 2: LASSO-Cox regression to select key predictive genes
 
