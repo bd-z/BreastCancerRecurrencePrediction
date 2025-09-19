@@ -1,14 +1,3 @@
-kable_table_func <- function(df, title){
-  # convert a table into a kable function
-  kable(df, digits = 4, format = "latex", caption = title) %>%
-    kable_styling(
-      latex_options = c("striped", "hold_position"),
-      full_width = FALSE,
-      position = "center"
-    ) %>%
-    row_spec(0, bold = TRUE, background = "#D3D3D3")
-}
-
 generate_box_plots <- function(data, continuous_variables) {
   # Generate box plots using base R graphics
   for (var in continuous_variables) {
@@ -30,12 +19,12 @@ generate_box_plots <- function(data, continuous_variables) {
 }
 
 impute_missing_value <- function(clinical_cleaned, selected_col, missed_col) {
-  #' Perform multiple imputation using mice package
-  #' 
-  #' @param clinical_cleaned Cleaned clinical data frame
-  #' @param selected_col Columns used in imputation model
-  #' @param missed_col Target column(s) to impute
-  #' @return Data frame with imputed missing values
+  # Perform multiple imputation using mice package
+  # 
+  # @param clinical_cleaned Cleaned clinical data frame
+  # @param selected_col Columns used in imputation model
+  # @param missed_col Target column(s) to impute
+  # @return Data frame with imputed missing values
   
   # Extract relevant variables
   df_miss <- clinical_cleaned[, selected_col]
@@ -185,13 +174,13 @@ impute_fit_apply <- function(train_df, test_df, selected_col, missed_col, m = 20
 }
 
 bootstrap_sampl_split_miss_vale_imputation <- function(expr_mat, clinical_df) {
-  #' Bootstrap Sampling and Data Preparation#'
-  #' Performs bootstrap sampling, data splitting, and missing value imputation
-  #' for expression and clinical data.
-  #'
-  #' @param expr_mat Expression matrix (genes x samples)
-  #' @param clinical_df Clinical data frame (samples x variables)
-  #' @return List containing processed training and test data, or NULL if skipped
+  # Bootstrap Sampling and Data Preparation#
+  # Performs bootstrap sampling, data splitting, and missing value imputation
+  # for expression and clinical data.
+  #
+  # @param expr_mat Expression matrix (genes x samples)
+  # @param clinical_df Clinical data frame (samples x variables)
+  # @return List containing processed training and test data, or NULL if skipped
   
   
   n <- ncol(expr_mat)
@@ -255,12 +244,12 @@ bootstrap_sampl_split_miss_vale_imputation <- function(expr_mat, clinical_df) {
 }
 
 filter_genes_by_mad <- function(train_expr, test_expr, quantile_cutoff = 0.1) {
-  #' Filter Genes by MAD (Median Absolute Deviation)  #'
-  #' Filters genes based on MAD threshold, keeping top 90% most variable genes.  #'
-  #' @param train_expr Training expression matrix (genes x samples)
-  #' @param test_expr Test expression matrix (genes x samples)
-  #' @param quantile_cutoff Quantile cutoff for MAD filtering (default: 0.1)
-  #' @return List containing filtered train and test expression matrices, or NULL if no genes pass filter
+  # Filter Genes by MAD (Median Absolute Deviation)  #
+  # Filters genes based on MAD threshold, keeping top 90% most variable genes.  #
+  # @param train_expr Training expression matrix (genes x samples)
+  # @param test_expr Test expression matrix (genes x samples)
+  # @param quantile_cutoff Quantile cutoff for MAD filtering (default: 0.1)
+  # @return List containing filtered train and test expression matrices, or NULL if no genes pass filter
   
   # Calculate MAD for each gene
   mad_train_expr <- apply(train_expr, 1, mad)
@@ -1315,10 +1304,8 @@ run_bootstrap_validation_3_model <- function(expr_mat, clinical_df,
   ))
 }
 
-
 #geo_accession_7390 <- clinical_cleaned_7390$geo_accession
 #expr_mat_7390 <- expr[, geo_accession_7390, drop = FALSE]
-
 # res7390_3_model4 <- run_bootstrap_validation_3_model(expr_mat = expr_mat_7390,
 #                                                      clinical_df = clinical_cleaned_7390, 
 #                                                      B = 100, 
@@ -1329,7 +1316,7 @@ run_bootstrap_validation_3_model <- function(expr_mat, clinical_df,
 
 #saveRDS(res7390_3_model4, "res7390_3_model4.rds")
 
-
+##### PCA COX
 train_cox_with_pca <- function(data = merged_df, 
                                time_col,
                                status_col,
@@ -1360,6 +1347,9 @@ train_cox_with_pca <- function(data = merged_df,
   
   events_train <- sum(train_surv$e_dmfs)
   max_vars_allowed <- floor(events_train / 3)
+  # Enforced an events-per-variable (EPV) rule of 3 in order to explain at least
+  # 50% of the variance in the original data.
+  
   cumulative_variance <- pca_summary$importance[3, max_vars_allowed]  # Third row is cumulative variance
   cat("The first", max_vars_allowed, "principal components explain", 
       round(cumulative_variance * 100, 2), "% of the variance\n")
@@ -1396,6 +1386,7 @@ train_cox_with_pca <- function(data = merged_df,
                                      paste(colnames(train_pcs), collapse = " + "),"+ (1 | hospital)"))
   cox_me_model <- coxme(cox_me_formula, data = train_df, x = TRUE)
   cox_me_model_summ <- summary(cox_me_model)
+  
   # this p value is to measue the random effect of hospital, smaller value indicates significient effect
   cox_me_p_value <- as.data.frame(cox_me_model_summ$chi) %>% select("p")
   coxme_cindex <- evaluate_coxme_cindex(cox_me_model, test_df, time_var = "t_dmfs", status_var = "e_dmfs")
@@ -1404,15 +1395,32 @@ train_cox_with_pca <- function(data = merged_df,
   ## COX model
   cox_formula <- as.formula(paste("Surv(t_dmfs, e_dmfs) ~", 
                                   paste(colnames(train_pcs), collapse = " + ")))
-  cox_model <- coxph(cox_formula, data = train_df, x = TRUE)
+  cox_model <- coxph(cox_formula, data = train_df, x = TRUE,  y=TRUE, model=TRUE)
   ph_test <- cox.zph(cox_model)
   global_ph_test <- ph_test$table[nrow(ph_test$table),3]
   # Make predictions on test set
-  test_risk <- predict(cox_model, newdata = test_df, type = "risk")
+  # test_risk <- predict(cox_model, newdata = test_df, type = "risk")
   
-  # Calculate performance metrics
-  #c_index <- concordance(cox_model, newdata = test_df)$concordance
-  test_result <- calculate_time_auc_cindex(model_type = "Cox", fitted_model= cox_model, df = test_df)
+  test_result <- try(
+    calculate_time_auc_cindex(model_type = "Cox", fitted_model= cox_model, df = test_df),
+    silent = TRUE
+  )
+  
+  failed <- FALSE
+  if (inherits(test_result, "try-error")) {
+    failed <- TRUE
+  } else {
+    # Safely extract results
+    ci   <- test_result$c_index
+    iauc <- test_result$iAUC
+    # If either metric is non-finite, mark as failed
+    if (!is.finite(ci) || !is.finite(iauc)) failed <- TRUE
+  }
+  
+  if (failed) {
+    message("Iteration: scoring failed or returned non-finite values. Skipping.")
+    stop()  # <--- Key: skip to the next iteration
+  }
   
   # Return results
   return(list(
@@ -1420,9 +1428,9 @@ train_cox_with_pca <- function(data = merged_df,
     train_pca = pca_train,
     max_vars_allowed = max_vars_allowed,
     cumulative_variance_explained = cumulative_variance,
-    c_index = test_result$c_index,
-    iAUC = test_result$iAUC,
-    total_score = test_result$c_index + test_result$iAUC,
+    c_index = ci, #test_result$c_index,
+    iAUC = iauc,#test_result$iAUC,
+    total_score = ci + iauc, #test_result$c_index + test_result$iAUC,
     global_ph_test = global_ph_test,
     cox_me_model_summary = summary(cox_me_model),
     cox_me_p_value = cox_me_p_value,
@@ -1430,9 +1438,6 @@ train_cox_with_pca <- function(data = merged_df,
     cox_model_summary = summary(cox_model)
   ))
 }
-
-
-
 
 # Function to evaluate Cox model with PCA over multiple runs
 bootstrap_train_cox_with_pca <- function(data, clinical_df, n_runs, seed) {
@@ -1459,15 +1464,26 @@ bootstrap_train_cox_with_pca <- function(data, clinical_df, n_runs, seed) {
     
     cat(sprintf("Running iteration %d/%d...\n", i, n_runs))
     
-    # Execute model training
-    results <- train_cox_with_pca(
-      data = data,
-      time_col = "t_dmfs",
-      status_col = "e_dmfs",
-      clinical_df,
-      train_ratio = 0.7,
-      variance_threshold = 0.7
-    )
+    results <- tryCatch(
+        {
+          train_cox_with_pca(
+            data = data,
+            time_col = "t_dmfs",
+            status_col = "e_dmfs",
+            clinical_df,
+            train_ratio = 0.7,
+            variance_threshold = 0.7
+          )
+        },
+        error = function(e) {
+          message(paste("Error at iteration", i, ":", e$message))
+          return(NULL)   
+        }
+      )
+      
+      if (is.null(results)) {
+        next   
+      }
     
     # Store performance metrics
     c_index_results[i] <- results$c_index
@@ -1532,18 +1548,21 @@ bootstrap_train_cox_with_pca <- function(data, clinical_df, n_runs, seed) {
   ))
 }
 
-
-
-# pca_result <- bootstrap_train_cox_with_pca(data = merged_df,
+# pca_result_9_18_2 <- bootstrap_train_cox_with_pca(data = merged_df,
 #                                            clinical_df = clinical_cleaned_7390,
-#                                            n_runs = 2, 
-#                                            seed = 123 )
+#                                            n_runs = 100,
+#                                            seed = 12395 )
 
+#saveRDS(pca_result_9_18_2, "PCA_COX_result_model-inclusive_9_18_2.rds")
 
+# EPV=3 model = FALSE in trainning
+# pca_cox_result <- readRDS("PCA_COX_result_model-inclusive.rds")
 
+#EPV=3 model = TRUE in trainning
+#pca_cox_result <- readRDS("PCA_COX_result_model-inclusive_9_18_2.rds") 
 
-
-##########################
+#EPV=5
+#pca_cox_result <- readRDS("PCA_COX_result_model-inclusive_9_18.rds") 
 
 calculate_coxme_predictions <- function(cox_me_model, test_df) {
   # Extract fixed effects coefficients
@@ -1568,381 +1587,82 @@ evaluate_coxme_cindex <- function(cox_me_model, test_df, time_var, status_var) {
 
 #coxme_cindex <- evaluate_coxme_cindex(cox_me_model, test_df, time_var = "t_dmfs", status_var = "e_dmfs")
 
+predict_pca_cox <- function(new_pat, pca_cox_result) {
+  # @description 
+  # This function takes new patient data and a trained PCA-COX model to predict
+  # survival outcomes.
+  #
+  # @param new_pat Dataframe containing new patient data. include:
+  #   - Gene expression features (variables used in original PCA)
+  #   - t_dmfs: Time to event or last follow-up
+  #   - e_dmfs: Event status (0=censored, 1=event)
+  #   
+  # @param pca_cox_result List containing trained PCA-COX model object with:
+  #   - best_results$train_pca: PCA parameters (center, scale, rotation)
+  #   - best_results$max_vars_allowed: Number of principal components to use
+  #   - best_results$model: Trained COX regression model
+  #
+  # @return Dataframe with predictions containing:
+  #   - risk_score: Linear predictor score from COX model
+  #   - hazard_ratio: Relative hazard ratio compared to baseline
+  #   - survival_P_at_val_time: Survival probability at patient's actual time point
+  #   - val_time_dmfs: Actual observation time (for validation)
+  #   - val_event_dmfs: Actual event status (for validation)
+  
+  
+  # Extract gene features (exclude survival variables)
+  test_feat <- as.matrix(new_pat[, !(names(new_pat) %in% c("t_dmfs", "e_dmfs"))])
+  test_surv <- as.data.frame(new_pat[,(names(new_pat) %in% c("t_dmfs", "e_dmfs"))])
+  predict_time_point <- test_surv$t_dmfs
+  
+  # Get PCA parameters from trained model
+  pca_center <- pca_cox_result$best_results$train_pca$center
+  pca_scale <- pca_cox_result$best_results$train_pca$scale
+  pca_rotation <- pca_cox_result$best_results$train_pca$rotation
+  pca_max_vars <- pca_cox_result$best_results$max_vars_allowed
+  
+  # Standardize new data using training parameters
+  test_scaled <- scale(test_feat, center = pca_center, scale = pca_scale)
+  
+  # Transform to PCA space
+  test_pcs <- test_scaled %*% pca_rotation
+  test_pcs <- test_pcs[, 1:pca_max_vars, drop = FALSE]
+  
+  # Prepare data for COX prediction
+  test_df <- as.data.frame(test_pcs)
+  
+  # Get COX model and predict
+  cox_model <- pca_cox_result$best_results$model
+  
+  sfit <- survfit(cox_model, newdata = test_df)  
+  out <- summary(sfit, times = predict_time_point)
+  
+  #survival_P_at_val_time = predict(cox_model, newdata = test_df, type = "survival", times = predict_time_point)
+  
+  predictions <- data.frame(
+    risk_score = predict(cox_model, newdata = test_df, type = "lp"),
+    hazard_ratio = predict(cox_model, newdata = test_df, type = "risk"),
+    survival_P_at_val_time = out$surv,
+    val_time_dmfs = new_pat$t_dmfs,
+    val_event_dmfs = new_pat$e_dmfs
+  )
+  return(predictions)
+}
+# results <- predict_pca_cox(new_patient_data, pca_cox_model)
 
+sanitize_latex <- function(x) {
+  gsub("([%$&#_{}~^\\\\])", "\\\\\\1", x, perl = TRUE)
+}
 
-##################
-
-##### 
-# run_bootstrap_validation_3_model <- function(expr_mat, clinical_df, 
-#                                              B = 10, 
-#                                              seed = 90000,
-#                                              min_epv = 2.5, 
-#                                              coef_max = 10,
-#                                              min_concord = 0.98) {
-#   
-#   
-#   km_p_list <- list() #save KM log rank test p value for test_data
-#   train_indices_list <- list()
-#   gene_list <- list()
-#   
-#   # model multimodal
-#   perf_list_mm <- list()
-#   rsf_predictor_list_mm <- list()
-#   best_perf_mm <- -Inf
-#   best_model_mm <- NULL
-#   best_iter_mm <- 0
-#   best_seed_mm <- NULL
-#   best_method_mm <- "None"
-#   
-#   # model gene
-#   perf_list_mg <- list()
-#   rsf_predictor_list_mg <- list()
-#   best_perf_mg <- -Inf
-#   best_model_mg <- NULL
-#   best_iter_mg <- 0
-#   best_seed_mg <- NULL
-#   best_method_mg <- "None"
-#   
-#   # model clinic
-#   perf_list_mc <- list()
-#   rsf_predictor_list_mc <- list()
-#   best_perf_mc <- -Inf
-#   best_model_mc <- NULL
-#   best_iter_mc <- 0
-#   best_seed_mc <- NULL
-#   best_method_mc <- "None"
-#   
-#   
-#   
-#   message("初始化完成：expr_mat 维度 = ", toString(dim(expr_mat)), 
-#           ", clinical_df 维度 = ", toString(dim(clinical_df)))
-#   
-#   for (b in 1:B) {
-#     # Bootstrap 采样
-#     current_seed <- seed + b 
-#     set.seed(current_seed) 
-#     message(sprintf("Bootstrap %d: seed = %d", b, seed + b))
-#     
-#    
-#     data_prepare_result <- bootstrap_sampl_split_miss_vale_imputation(expr_mat, clinical_df)
-#     
-#     if (is.null(data_prepare_result)) {
-#       message(sprintf("Bootstrap %d skipped: Invalid train_expr dimensions", b))
-#       next
-#     }
-#     train_expr <- data_prepare_result$train_expr
-#     test_expr <- data_prepare_result$test_expr
-#     train_clinical <- data_prepare_result$train_clinical
-#     test_clinical <- data_prepare_result$test_clinical
-#     events_train <- data_prepare_result$events_train
-#     
-#     message(sprintf("Bootstrap %d: Number of events in training set = %d", b, events_train))
-#     message("事件数计算完成")
-#     
-#     # MAD 过滤
-#     filtered_data <- filter_genes_by_mad(train_expr, test_expr, quantile_cutoff = 0.25)
-#     train_expr2 <- filtered_data$train_expr
-#     test_expr3 <- filtered_data$test_expr  
-#     
-#     message("MAD 过滤后矩阵生成完成：train_expr2 维度 = ", toString(dim(train_expr2)), 
-#             ", test_expr2 维度 = ", toString(dim(test_expr2)))
-#     
-#     # 单变量 Cox 回归
-#     sig_gene_df <- batch_univariate_cox_regression(train_expr2, train_clinical, p_value = 0.01)
-#     message(sprintf("Bootstrap %d: 单变量 Cox 回归完成，显著基因数 = %d", 
-#                     b, if (is.null(sig_gene_df)) 0 else nrow(sig_gene_df)))
-#     
-#     if (is.null(sig_gene_df) || nrow(sig_gene_df) == 0) {
-#       message(sprintf("Bootstrap %d skipped: No significant genes from univariate Cox", b))
-#       next
-#     }
-#     
-#     significant_gene <- sig_gene_df$gene
-#     message(sprintf("Bootstrap %d: 提取显著基因完成，significant_gene 长度 = %d", 
-#                     b, length(significant_gene)))
-#     
-#     if (length(significant_gene) < 2) {
-#       message(sprintf("Bootstrap %d skipped: significant genes < 2", b))
-#       next
-#     }
-#     
-#     # 标准化训练集基因数据
-#     train_expr_scaled <- standardize_with_train(gene_mat_train = train_expr2,
-#                                                 gene_mat_valid = train_expr2,
-#                                                 significant_gene = significant_gene)
-#     message("标准化训练集基因数据完成：train_expr_scaled 维度 = ", 
-#             toString(dim(train_expr_scaled)))
-#     
-#     if (is.null(train_expr_scaled) || nrow(train_expr_scaled) == 0) {
-#       message(sprintf("Bootstrap %d skipped: Invalid standardized training data", b))
-#       next
-#     }
-#     
-#     if (nrow(train_expr_scaled) < 2) {
-#       message(sprintf("Bootstrap %d skipped: nrow(train_expr_scaled) < 2", b))
-#       next
-#     }
-#     
-#     # 相关性过滤
-#     train_expr_filtered <- remove_high_corr_genes(train_expr_scaled, cutoff = 0.90)
-#     message("相关性过滤完成：train_expr_filtered 维度 = ", 
-#             toString(dim(train_expr_filtered)))
-#     
-#     if (is.null(train_expr_filtered) || nrow(train_expr_filtered) < 2) {
-#       message(sprintf("Bootstrap %d skipped: No genes after correlation filtering", b))
-#       next
-#     }
-#     
-#     significant_gene2 <- rownames(train_expr_filtered)
-#     message(sprintf("Bootstrap %d: 提取过滤后基因完成，significant_gene2 长度 = %d", 
-#                     b, length(significant_gene2)))
-#     
-#     # 标准化测试集基因数据
-#     test_expr_scaled <- standardize_with_train(gene_mat_train = train_expr2,
-#                                                gene_mat_valid = test_expr2,
-#                                                significant_gene = significant_gene2)
-#     message("标准化测试集基因数据完成：test_expr_scaled 维度 = ", 
-#             toString(dim(test_expr_scaled)))
-#     
-#     # 标准化训练集临床数据
-#     numeric_columns <- train_clinical %>%
-#       select(where(is.numeric)) %>%
-#       colnames
-#     
-#     numeric_columns <- setdiff(numeric_columns, columns_to_remove)
-#     
-#     train_clinical_scaled <- standardize_with_train_clinical(train_clinical,
-#                                                              train_clinical,
-#                                                              scale_cols = numeric_columns)
-#     message("标准化训练集临床数据完成：train_clinical_scaled 维度 = ", 
-#             toString(dim(train_clinical_scaled)))
-#     
-#     # 标准化测试集临床数据
-#     test_clinical_scaled <- standardize_with_train_clinical(train_clinical,
-#                                                             test_clinical,
-#                                                             scale_cols = numeric_columns)
-#     message("标准化测试集临床数据完成：test_clinical_scaled 维度 = ", 
-#             toString(dim(test_clinical_scaled)))
-#     
-#     # LASSO Cox
-#     gene_freq_df <- repeat_cv_lasso_cox(train_expr = train_expr_filtered,
-#                                         train_clinical,
-#                                         significant_gene_vec = significant_gene2,
-#                                         repeats = 5,
-#                                         nfolds = 10,
-#                                         alpha = 1)
-#     message(sprintf("Bootstrap %d: LASSO Cox 完成，gene_freq_df 行数 = %d", 
-#                     b, nrow(gene_freq_df)))
-#     
-#     # 动态筛选变量，满足 EPV 要求
-#     gene_freq_df_best <- gene_freq_df %>%
-#       filter(freq >= 0.8)
-#     max_vars_allowed <- floor(events_train / min_epv)
-#     message(sprintf("Bootstrap %d: 动态筛选变量完成，gene_freq_df_best 行数 = %d, max_vars_allowed = %d", 
-#                     b, nrow(gene_freq_df_best), max_vars_allowed))
-#     
-#     if (max_vars_allowed == 0 || nrow(gene_freq_df) == 0) {
-#       message(sprintf("Bootstrap %d skipped: Too few events or no selected genes", b))
-#       next
-#     }
-#     
-#     selected_gene_df <- gene_freq_df[1:min(nrow(gene_freq_df_best), max_vars_allowed), ] %>%
-#       mutate(coef = mean_coef)
-#     message(sprintf("Bootstrap %d: 选择基因完成，selected_gene_df 行数 = %d, EPV = %.2f", 
-#                     b, nrow(selected_gene_df), events_train / nrow(selected_gene_df)))
-#     
-#     gene_list[[b]] <- selected_gene_df$gene
-#     
-#     result <- compute_risk_score_train(
-#       gene_mat_scaled  = train_expr_filtered,
-#       significant_vars_df = selected_gene_df,
-#       clinical_cleaned = train_clinical_scaled
-#     )
-#     # 提取各个组件
-#     q33_train <- result$q33
-#     q67_train <- result$q67
-#     clinical_cleaned_risk_train <- result$merged_df
-#     
-#     message("训练集风险分数计算完成：clinical_cleaned_risk_train 维度 = ", 
-#             toString(dim(clinical_cleaned_risk_train)))
-#     
-#     # 测试集风险分数
-#     clinical_cleaned_risk_test <- compute_risk_score_test(
-#       gene_mat_scaled = test_expr_scaled,
-#       significant_vars_df = selected_gene_df,
-#       clinical_cleaned = test_clinical_scaled,
-#       q33_train,
-#       q67_train)
-#     
-#     message("测试集风险分数计算完成：clinical_cleaned_risk_test 维度 = ", 
-#             toString(dim(clinical_cleaned_risk_test)))
-#     
-#     km_p <- km_by_group(df = clinical_cleaned_risk_test, group_var = "risk_group")
-#     km_p_list[[b]] <- km_p
-#     
-#     # predictors0 <- c("Sex", "Age_at_Diagnosis", "TNM_T", "TNM_N", "TNM_M", "Tumor_Location",
-#     #                  "Chemotherapy_Adjuvant", "MMR_Status", "KRAS_Mutation")
-#     # 
-#     # predictors <- c(predictors0, colnames(clinical_cleaned_risk_train)[15:ncol(clinical_cleaned_risk_train)])
-#     
-#     columns_to_remove2 <- c("e_dmfs", "t_dmfs", "risk_score", "risk_group")
-#     character_columns <- clinical_cleaned_risk_train %>%
-#       select(where(is.character)) %>%
-#       colnames()
-#     predictors <- colnames(clinical_cleaned_risk_train) %>% setdiff(c(columns_to_remove2, character_columns))
-#     
-#     message(sprintf("Bootstrap %d: 预测变量选择完成，predictors 长度 = %d", 
-#                     b, length(predictors)))
-#     df <- clinical_cleaned_risk_train[, c(predictors, "t_dmfs", "e_dmfs")]
-#     
-#     
-#     #model multimodal
-#     model_m <- run_bootstrap_iteration_1_model(
-#       predictors_filtered = predictors,
-#       df = df,
-#       b = b,
-#       coef_max = coef_max,
-#       min_concord = min_concord,
-#       clinical_cleaned_risk_test = clinical_cleaned_risk_test,
-#       selected_gene_df = selected_gene_df,
-#       perf_list = perf_list_mm,
-#       rsf_predictor_list = rsf_predictor_list_mm,
-#       best_perf = best_perf_mm,
-#       best_model = best_model_mm,
-#       best_iter = best_iter_mm,
-#       best_seed = best_seed_mm,
-#       best_method = best_method_mm,
-#       current_seed = current_seed
-#     )
-#     
-#     # Update all variables
-#     perf_list_mm <- model_m$perf_list
-#     rsf_predictor_list_mm <- model_m$rsf_predictor_list
-#     best_perf_mm <- model_m$best_perf
-#     best_model_mm <- model_m$best_model
-#     best_iter_mm <- model_m$best_iter
-#     best_seed_mm <- model_m$best_seed
-#     best_method_mm <- model_m$best_method
-#     
-#     
-#     #model gene
-#     predictors_g <- predictors[5:length(predictors_filtered)]
-#     model_g <- run_bootstrap_iteration_1_model(
-#       predictors_filtered = predictors_g,
-#       df = df,
-#       b = b,
-#       coef_max = coef_max,
-#       min_concord = min_concord,
-#       clinical_cleaned_risk_test = clinical_cleaned_risk_test,
-#       selected_gene_df = selected_gene_df,
-#       perf_list = perf_list_mg,
-#       rsf_predictor_list = rsf_predictor_list_mg,
-#       best_perf = best_perf_mg,
-#       best_model = best_model_mg,
-#       best_iter = best_iter_mg,
-#       best_seed = best_seed_mg,
-#       best_method = best_method_mg,
-#       current_seed = current_seed
-#     )
-#     
-#     # Update all variables
-#     perf_list_mg <- model_g$perf_list
-#     rsf_predictor_list_mg <- model_g$rsf_predictor_list
-#     best_perf_mg <- model_g$best_perf
-#     best_model_mg <- model_g$best_model
-#     best_iter_mg <- model_g$best_iter
-#     best_seed_mg <- model_g$best_seed
-#     best_method_mg <- model_g$best_method
-#     
-#     
-#     #model clinic
-#     predictors_c <- predictors_filtered[1:4]
-#     model_c <- run_bootstrap_iteration_1_model(
-#       predictors_filtered = predictors_c,  # Fixed: should be predictors_filtered_c not predictors_filtered_g
-#       df = df,
-#       b = b,
-#       coef_max = coef_max,
-#       min_concord = min_concord,
-#       clinical_cleaned_risk_test = clinical_cleaned_risk_test,
-#       selected_gene_df = selected_gene_df,
-#       perf_list = perf_list_mc,
-#       rsf_predictor_list = rsf_predictor_list_mc,
-#       best_perf = best_perf_mc,
-#       best_model = best_model_mc,
-#       best_iter = best_iter_mc,
-#       best_seed = best_seed_mc,
-#       best_method = best_method_mc,
-#       current_seed = current_seed
-#     )
-#     
-#     # Update all variables
-#     perf_list_mc <- model_c$perf_list
-#     rsf_predictor_list_mc <- model_c$rsf_predictor_list
-#     best_perf_mc <- model_c$best_perf
-#     best_model_mc <- model_c$best_model
-#     best_iter_mc <- model_c$best_iter
-#     best_seed_mc <- model_c$best_seed
-#     best_method_mc <- model_c$best_method
-#     
-#   }
-#   
-#   message("所有 Bootstrap 迭代完成")
-#   
-#   ##### # 汇总
-#   
-#   
-#   # 创建数据框
-#   summary_df <- data.frame(
-#     model = c("mc", "mg", "mm"),
-#     rsf_predictors = I(list(
-#       rsf_predictor_list_mc[[1]],
-#       rsf_predictor_list_mg[[1]],
-#       rsf_predictor_list_mm[[1]]
-#     )),
-#     best_performance = c(best_perf_mc, best_perf_mg, best_perf_mm),
-#     best_iteration = c(best_iter_mc, best_iter_mg, best_iter_mm),
-#     best_seed = c(best_seed_mc, best_seed_mg, best_seed_mm),
-#     best_method = c(best_method_mc, best_method_mg, best_method_mm),
-#     stringsAsFactors = FALSE
-#   )
-#   
-#   summary_results_mm <- summarize_performance(
-#     perf_list = perf_list_mm,
-#     B = B
-#   )
-#   summary_results_mg <- summarize_performance(
-#     perf_list = perf_list_mg,
-#     B = B
-#   )
-#   
-#   summary_results_mc <- summarize_performance(
-#     perf_list = perf_list_mc,
-#     B = B
-#   )
-#   
-#   # 计算基因频率
-#   all_genes <- unlist(gene_list)
-#   gene_freq <- sort(table(all_genes) / B, decreasing = TRUE)
-#   message("基因频率计算完成")
-#   
-#   # 计算km_p的平均值
-#   km_p_list_nz <- Filter(Negate(is.null), km_p_list) 
-#   km_p_values <- unlist(km_p_list_nz)
-#   mean_km_p <- mean(km_p_values, na.rm = TRUE)
-#   message("性能指标汇总完成: mean_km_p = ", mean_km_p)
-#   
-#   return(list(
-#     summary_df = summary_df,
-#     best_model_mc = best_model_mc,
-#     best_model_mg = best_model_mg,
-#     best_model_mm = best_model_mm,
-#     train_indices_list = train_indices_list,
-#     mean_km_p = mean_km_p,  
-#     km_p_values = km_p_list_nz, 
-#     gene_frequency = gene_freq,
-#     summary_results_mm = summary_results_mm,
-#     summary_results_mg = summary_results_mg,
-#     summary_results_mc = summary_results_mc
-#   ))
-# }
-# 
+kable_table_func <- function(df, title, digit = 4){
+  # convert a table into a kable function
+  title <- sanitize_latex(title)
+  kable(df, digits = digit, format = "latex", caption = title) %>%
+    kable_styling(
+      latex_options = c("striped", "hold_position", "scale_down"),
+      full_width = FALSE,
+      position = "center"
+    ) %>%
+    row_spec(0, bold = TRUE, background = "#D3D3D3") %>%
+    column_spec(2, width = "8cm") 
+}
