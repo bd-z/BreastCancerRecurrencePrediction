@@ -111,41 +111,6 @@ find_best_latent_dim <- function(
   ))
 }
 
-# 
-# best_2 <- find_best_latent_dim(
-#   latent_dims = c(51, 61, 71, 81, 91, 101, 111, 121, 150, 200),
-#   x_data = x_data,
-#   x_val_data = x_val_data,
-#   hidden_dim = 128
-# )
-# 
-# results <- best_2$results
-# best_latent_dim <- best_2$best_latent_dim
-# best_overall_loss <- best_2$best_overall_loss
-# 
-# saveRDS(best_2, "best_latent_dim150.rds")
-
-# best_3 <- find_best_latent_dim(
-#   latent_dims = c(150, 160, 170, 200, 300, 400, 500, 100),
-#   x_data = x_data,
-#   x_val_data = x_val_data,
-#   hidden_dim = 128
-# )
-# 
-# results <- best_3$results
-# 
-# # Plot
-# if (length(results) > 0) {
-#   latent_dims <- sapply(results, function(x) x$latent_dim)
-#   val_losses <- sapply(results, function(x) x$best_val_loss)
-#   
-#   plot(latent_dims, val_losses, type = "b", pch = 19, col = "blue",
-#        xlab = "Latent Dimension", ylab = "Best Validation Loss",
-#        main = "VAE Performance vs Latent Dimension")
-#   points(best_latent_dim, best_overall_loss, pch = 19, col = "red", cex = 1.5)
-#   legend("topright", legend = "Best", pch = 19, col = "red")
-# }
-
 extract_latent_variables <- function(model=model1, data=x_data, device) {
   # Extract latent variables mu from a VAE model (Cox model uses only mu)  
   # Arguments:
@@ -182,7 +147,7 @@ run_vae_cox_iterations <- function(
     mad_quantile   = 0.25,
     uni_cox_p      = 0.01,
     corr_cutoff    = 0.90,
-    save_dir       = NULL     # e.g. "best_models"; NULL means do not save
+    save_dir       = "best_models"  # NULL means do not save
 ) {
   
   

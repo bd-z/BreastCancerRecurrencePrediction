@@ -72,11 +72,10 @@ impute_fit_apply <- function(train_df, test_df, selected_col, missed_col, m = 20
   test_sel  <- test_df[,  selected_col, drop = FALSE]
   
   # ensure rownames exist for binding/matching
-  #if (is.null(rownames(train_sel))) rownames(train_sel) <- paste0("train_", seq_len(nrow(train_sel)))
   if (is.null(rownames(train_sel)) || !any(grepl("train", rownames(train_sel)))) {
     rownames(train_sel) <- paste0("train_", seq_len(nrow(train_sel)))
   }
-  #if (is.null(rownames(test_sel)))  rownames(test_sel)  <- paste0("test_" , seq_len(nrow(test_sel)))
+  
   if (is.null(rownames(test_sel)) || !any(grepl("test", rownames(test_sel)))) {
     rownames(test_sel) <- paste0("test_", seq_len(nrow(test_sel)))
   }
@@ -86,14 +85,6 @@ impute_fit_apply <- function(train_df, test_df, selected_col, missed_col, m = 20
   # build mice methods (only columns in missed_col get imputed)
   methods <- make.method(df_all)
   methods[] <- ""  # default: no imputation
-  # methods <- methods[, !names(methods) %in% missed_col, drop = FALSE]
-  # 
-  # methods[intersect(missed_col, names(methods))] <- c()  # initialize
-  # # common_cols <- intersect(missed_col, names(methods))
-  # # if (length(common_cols) > 0) {
-  # #   methods[common_cols] <- ""
-  # # }
-  
   
   for (col in missed_col) {
     if (!col %in% names(methods)) next
@@ -102,8 +93,6 @@ impute_fit_apply <- function(train_df, test_df, selected_col, missed_col, m = 20
     else if (col %in% c("age","size")) "pmm" # predictive mean matching for numeric
     else ""  # skip others
   }
-  
-  # "TNM_M","Chemotherapy_Adjuvant","MMR_Status","KRAS_Mutation" exist in GSE39582 dataset
   
   # fit on train rows, apply to test rows
   imp <- mice(df_all, m = m, method = methods, ignore = is_test, printFlag = FALSE, seed = 123)
@@ -129,7 +118,6 @@ impute_fit_apply <- function(train_df, test_df, selected_col, missed_col, m = 20
     v    <- vals[keep]
     
     if (is.factor(df_all_imp[[col]])) {
-      # strictly refuse unseen levels
       ok <- v %in% levels(df_all_imp[[col]])
       df_all_imp[[col]][pos[ok]] <- v[ok]
       # leave non-ok as NA
@@ -355,6 +343,7 @@ standardize_with_train_clinical <- function(train_clinical, test_clinical, scale
 }
 
 remove_high_corr_genes <- function(expr_mat, cutoff = 0.90) {
+  
   # expr_mat: genes x samples
   if (is.null(expr_mat) || !is.matrix(expr_mat)) return(expr_mat)
   if (nrow(expr_mat) < 2) return(expr_mat)  # when less than 2 gene, return
@@ -392,9 +381,7 @@ fit_cox_model <- function(predictors, df) {
     )
     
     # Test PH assumption
-    # cat("Proportional hazards (PH) assumption test:\n")
     test_ph <- cox.zph(cox_model)
-    #print(test_ph)
     
     # Return a fixed structure
     list(
@@ -1554,15 +1541,6 @@ bootstrap_train_cox_with_pca <- function(data, clinical_df, n_runs, seed) {
 
 #saveRDS(pca_result_9_18_2, "PCA_COX_result_model-inclusive_9_18_2.rds")
 
-# EPV=3 model = FALSE in trainning
-# pca_cox_result <- readRDS("PCA_COX_result_model-inclusive.rds")
-
-#EPV=3 model = TRUE in trainning
-#pca_cox_result <- readRDS("PCA_COX_result_model-inclusive_9_18_2.rds") 
-
-#EPV=5
-#pca_cox_result <- readRDS("PCA_COX_result_model-inclusive_9_18.rds") 
-
 calculate_coxme_predictions <- function(cox_me_model, test_df) {
   # Extract fixed effects coefficients
   fixed_coef <- fixef(cox_me_model)
@@ -1647,7 +1625,7 @@ predict_pca_cox <- function(new_pat, pca_cox_result) {
   )
   return(predictions)
 }
-# results <- predict_pca_cox(new_patient_data, pca_cox_model)
+
 
 sanitize_latex <- function(x) {
   gsub("([%$&#_{}~^\\\\])", "\\\\\\1", x, perl = TRUE)
@@ -1656,7 +1634,11 @@ sanitize_latex <- function(x) {
 kable_table_func <- function(df, title, digit = 4){
   # convert a table into a kable function
   title <- sanitize_latex(title)
-  kable(df, digits = digit, format = "latex", caption = title) %>%
+  kable(df,
+        digits = digit,
+        format = "latex",
+        caption = title,
+        row.names = FALSE) %>%
     kable_styling(
       latex_options = c("striped", "hold_position", "scale_down"),
       full_width = FALSE,
