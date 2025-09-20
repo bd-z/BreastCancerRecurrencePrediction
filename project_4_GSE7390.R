@@ -7,7 +7,7 @@ library(glmnet)
 
 options(scipen = 999)
 
-
+# library(GEOquery)
 # gset <- getGEO("GSE7390", GSEMatrix=TRUE)
 # expr <- exprs(gset[[1]])
 # clinical <- pData(gset[[1]])

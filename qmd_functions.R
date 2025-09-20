@@ -1,19 +1,17 @@
-generate_box_plots <- function(data, continuous_variables) {
-  # Generate box plots using base R graphics
+generate_box_plots <- function(data, continuous_variables, title) {
+  # Generate box plots using base R graphics with a custom title
   for (var in continuous_variables) {
-    
     var_data <- na.omit(data[[var]])
     par(mar = c(3, 4, 3, 2))  # Set margins
     boxplot(var_data,
             col = "lightblue",
-            main = paste("Boxplot of", var),
+            main = paste(title, var),
             ylab = var,
             cex.main = 0.8,
             cex.lab = 0.8,
             outcol = "red",
             outpch = 19,
             cex = 0.6)
-    
     grid(nx = NA, ny = NULL, lwd = 0.2)
   }
 }
@@ -370,6 +368,7 @@ remove_high_corr_genes <- function(expr_mat, cutoff = 0.90) {
 }
 
 fit_cox_model <- function(predictors, df) {
+  
   tryCatch({
     formula <- as.formula(paste(
       "Surv(t_dmfs, e_dmfs) ~",
@@ -380,9 +379,9 @@ fit_cox_model <- function(predictors, df) {
     cox_model <- coxph(formula, data = df, x = TRUE, y = TRUE)
     
     # Model summary
-    cat("Cox model summary:\n")
+    # cat("Cox model summary:\n")
     model_summary <- summary(cox_model)
-    print(model_summary)
+    #print(model_summary)
     
     # Coefficient table
     coef_df <- data.frame(
@@ -393,9 +392,9 @@ fit_cox_model <- function(predictors, df) {
     )
     
     # Test PH assumption
-    cat("Proportional hazards (PH) assumption test:\n")
+    # cat("Proportional hazards (PH) assumption test:\n")
     test_ph <- cox.zph(cox_model)
-    print(test_ph)
+    #print(test_ph)
     
     # Return a fixed structure
     list(
@@ -1663,6 +1662,5 @@ kable_table_func <- function(df, title, digit = 4){
       full_width = FALSE,
       position = "center"
     ) %>%
-    row_spec(0, bold = TRUE, background = "#D3D3D3") %>%
-    column_spec(2, width = "8cm") 
+    row_spec(0, bold = TRUE, background = "#D3D3D3") 
 }
