@@ -82,8 +82,8 @@ The data for this project were sourced from the internationally renowned NCBI GE
 # gset <- getGEO("GSE7390", GSEMatrix=TRUE)
 # expr <- exprs(gset[[1]])
 # clinical <- pData(gset[[1]])
-expr <- readRDS("expr_7390.rds")
-clinical <- readRDS("clinical_7390.rds")
+expr <- readRDS("train_result/expr_7390.rds")
+clinical <- readRDS("train_result/clinical_7390.rds")
 subset_tibble <- as_tibble(expr[1:5, 1:5], rownames = "Probe_ID")
 
 # process clinical data
@@ -456,7 +456,7 @@ test_clinical_scaled <- standardize_with_train_clinical(train_clinical,
 #                                         nfolds = 10,
 #                                         alpha = 1)
 #saveRDS(gene_freq_df, "gene_freq_df.rds")
-gene_freq_df <- readRDS("gene_freq_df.rds")
+gene_freq_df <- readRDS("train_result/gene_freq_df.rds")
 message(sprintf("LASSO Cox finished"))
 ```
 
@@ -622,7 +622,7 @@ RSF outputs a survival curve, which gives the estimated probability of surviving
 #result_rsf_train <- rsf_kfold_cv_best(data = df, K = 5, ntree = 1000)
 #saveRDS(result_rsf_train, "result_rsf_train2025_09_19.rds")
 
-result_rsf_train <- readRDS("result_rsf_train2025_09_19.rds")
+result_rsf_train <- readRDS("train_result/result_rsf_train2025_09_19.rds")
 rsf_fit_best <- result_rsf_train$best_model
 rsf_fit_full <- rfsrc(Surv(t_dmfs, e_dmfs) ~ ., data = df, ntree = 1000)
 rsf_v_importance <- data.frame(Variable = names(result_rsf_train$importance), 
@@ -737,7 +737,7 @@ expr_mat_7390 <- expr[, geo_accession_7390, drop = FALSE]
 #                                                      min_concord = 0.97)
 
 # Create a comparison dataframe
-res7390_3_model4 <- readRDS("res7390_3_model4.rds")
+res7390_3_model4 <- readRDS("train_result/res7390_3_model4.rds")
 
 model_comparison_mean <- data.frame(
   Model_Type = c("Clinical-only", "Genomic-only", "Clinical-Genomic Integrated"),
@@ -837,7 +837,7 @@ n_runs = 100
 #                                            n_runs = n_runs,
 #                                            seed = 12395 )
 
-pca_cox_result <- readRDS("PCA_COX_result_model-inclusive_9_18_2.rds") 
+pca_cox_result <- readRDS("train_result/PCA_COX_result_model-inclusive_9_18_2.rds") 
 pca_avg_results <- pca_cox_result$avg_results
 pca_best_results_df <- pca_cox_result$best_results_df
 
@@ -894,7 +894,7 @@ latent_dims = c(4,6,10, 11, 12, 13, 14, 15, 16, 20, 30)
 #   min_delta = 1e-6
 # )
 
-best2 <- readRDS("best_latent_dim30.rds")
+best2 <- readRDS("train_result/best_latent_dim30.rds")
 results <- best2$results
 best_latent_dim <- best2$best_latent_dim
 best_overall_loss <- best2$best_overall_loss
@@ -939,7 +939,7 @@ It is worth noting that, to reduce computational load in the VAE pipeline, we pr
 # )
 
 #saveRDS(res, "run_vae_cox_iterations_seed_2025091520.rds")
-res = readRDS("run_vae_cox_iterations_seed_2025091520.rds")
+res = readRDS("train_result/run_vae_cox_iterations_seed_2025091520.rds")
 ph_test <- cox.zph(res$best_multiv_model)
 global_p_vae <- ph_test$table["GLOBAL","p"]
 vae_iteration_results <- res$iteration_results
