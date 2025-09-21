@@ -2,4 +2,6 @@
 .Rhistory
 .RData
 .Ruserdata
-*.rds
+**/archiv/
+**/PCA_COX_result_model-inclusive_9_18_2.rds
+**/run_vae_cox_iterations_seed_2025091520.rds
