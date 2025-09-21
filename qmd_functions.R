@@ -1,4 +1,6 @@
-generate_box_plots <- function(data, continuous_variables, title) {
+generate_box_plots <- function(data,
+                               continuous_variables,
+                               title) {
   # Generate box plots using base R graphics with a custom title
   for (var in continuous_variables) {
     var_data <- na.omit(data[[var]])
@@ -16,7 +18,9 @@ generate_box_plots <- function(data, continuous_variables, title) {
   }
 }
 
-impute_missing_value <- function(clinical_cleaned, selected_col, missed_col) {
+impute_missing_value <- function(clinical_cleaned,
+                                 selected_col,
+                                 missed_col) {
   # Perform multiple imputation using mice package
   # 
   # @param clinical_cleaned Cleaned clinical data frame
@@ -66,7 +70,10 @@ impute_missing_value <- function(clinical_cleaned, selected_col, missed_col) {
   return(clinical_cleaned)
 }
 
-impute_fit_apply <- function(train_df, test_df, selected_col, missed_col, m = 20) {
+impute_fit_apply <- function(train_df,
+                             test_df,
+                             selected_col,
+                             missed_col, m = 20) {
   # subset columns to impute
   train_sel <- train_df[, selected_col, drop = FALSE]
   test_sel  <- test_df[,  selected_col, drop = FALSE]
@@ -159,7 +166,8 @@ impute_fit_apply <- function(train_df, test_df, selected_col, missed_col, m = 20
   list(train = out_train, test = out_test)
 }
 
-bootstrap_sampl_split_miss_vale_imputation <- function(expr_mat, clinical_df) {
+bootstrap_sampl_split_miss_vale_imputation <- function(expr_mat,
+                                                       clinical_df) {
   # Bootstrap Sampling and Data Preparation#
   # Performs bootstrap sampling, data splitting, and missing value imputation
   # for expression and clinical data.
@@ -229,7 +237,9 @@ bootstrap_sampl_split_miss_vale_imputation <- function(expr_mat, clinical_df) {
   ))
 }
 
-filter_genes_by_mad <- function(train_expr, test_expr, quantile_cutoff = 0.1) {
+filter_genes_by_mad <- function(train_expr,
+                                test_expr,
+                                quantile_cutoff = 0.1) {
   # Filter Genes by MAD (Median Absolute Deviation)  #
   # Filters genes based on MAD threshold, keeping top 90% most variable genes.  #
   # @param train_expr Training expression matrix (genes x samples)
@@ -259,7 +269,9 @@ filter_genes_by_mad <- function(train_expr, test_expr, quantile_cutoff = 0.1) {
   ))
 }
 
-batch_univariate_cox_regression <- function(train_expr, train_clinical, p_value) {
+batch_univariate_cox_regression <- function(train_expr,
+                                            train_clinical,
+                                            p_value) {
   # Description: Performs univariate Cox regression for each gene in the expression matrix
   # to evaluate associations with survival outcomes (DMFS time and status).
   # Input: train_expr (gene expression matrix), train_clinical (clinical data with t_dmfs and e_dmfs)
@@ -299,7 +311,9 @@ batch_univariate_cox_regression <- function(train_expr, train_clinical, p_value)
   return(sig_genes_df)
 }
 
-standardize_with_train <- function(gene_mat_train, gene_mat_valid, significant_gene) {
+standardize_with_train <- function(gene_mat_train,
+                                   gene_mat_valid,
+                                   significant_gene) {
   # Standardizes gene_mat_valid by using the column means and standard
   # deviations of gene_mat_trainn.
   # gene_mat_train is the original training data. 
@@ -322,7 +336,9 @@ standardize_with_train <- function(gene_mat_train, gene_mat_valid, significant_g
   return(selected_gene_mat_valid_scaled)
 }
 
-standardize_with_train_clinical <- function(train_clinical, test_clinical, scale_cols) {
+standardize_with_train_clinical <- function(train_clinical,
+                                            test_clinical,
+                                            scale_cols) {
   # Description: Standardize selected columns in test_clinical using the mean 
   # and sd from train_clinical
   
@@ -342,7 +358,8 @@ standardize_with_train_clinical <- function(train_clinical, test_clinical, scale
   return(test_scaled)
 }
 
-remove_high_corr_genes <- function(expr_mat, cutoff = 0.90) {
+remove_high_corr_genes <- function(expr_mat,
+                                   cutoff = 0.90) {
   
   # expr_mat: genes x samples
   if (is.null(expr_mat) || !is.matrix(expr_mat)) return(expr_mat)
@@ -356,7 +373,8 @@ remove_high_corr_genes <- function(expr_mat, cutoff = 0.90) {
   expr_mat[-idx, , drop = FALSE]
 }
 
-fit_cox_model <- function(predictors, df) {
+fit_cox_model <- function(predictors,
+                          df) {
   
   tryCatch({
     formula <- as.formula(paste(
@@ -446,7 +464,9 @@ repeat_cv_lasso_cox <- function(train_expr = train_expr_filtered,
   return(gene_freq_df)
 }
 
-compute_risk_score_train_2 <- function(gene_mat_scaled, significant_vars_df, clinical_cleaned) {
+compute_risk_score_train_2 <- function(gene_mat_scaled,
+                                       significant_vars_df,
+                                       clinical_cleaned) {
   # Computes risk scores based on scaled gene expression and model coefficients,
   # and assigns each sample to a risk group (low vs high) based on the median risk score.
   #
@@ -507,7 +527,10 @@ compute_risk_score_train_2 <- function(gene_mat_scaled, significant_vars_df, cli
   ))
 }
 
-compute_risk_score_test_2 <- function(gene_mat_scaled, significant_vars_df, clinical_cleaned, median_cut_train) {
+compute_risk_score_test_2 <- function(gene_mat_scaled,
+                                      significant_vars_df,
+                                      clinical_cleaned,
+                                      median_cut_train) {
   # Computes risk scores for the test set based on scaled gene expression and model coefficients,
   # and assigns each sample to a risk group (low vs high) using the training median cutoff.
   #
@@ -562,7 +585,8 @@ compute_risk_score_test_2 <- function(gene_mat_scaled, significant_vars_df, clin
   return(merged_df)
 }
 
-km_by_group <- function(df, group_var) {
+km_by_group <- function(df,
+                        group_var) {
   # Convert group_var to factor
   df$group_var <- as.factor(df[[group_var]])
   
@@ -584,7 +608,9 @@ km_by_group <- function(df, group_var) {
     ))
 }
 
-rsf_kfold_cv_best <- function(data, K = 5, ntree = 1000) {
+rsf_kfold_cv_best <- function(data,
+                              K = 5,
+                              ntree = 1000) {
   # Performs K-fold cross-validation for a Random Survival Forest model.
   # Retrain the final model on the entire dataset to extract variable importance.
   # Returns the model with the highest C-index on the validation fold.
@@ -640,7 +666,9 @@ rsf_kfold_cv_best <- function(data, K = 5, ntree = 1000) {
   ))
 }
 
-calculate_time_auc_cindex <- function(model_type = c("Cox", "RSF"), fitted_model, df) {
+calculate_time_auc_cindex <- function(model_type = c("Cox", "RSF"),
+                                      fitted_model,
+                                      df) {
   # This function evaluates the discrimination performance of a fitted survival 
   # model (either Cox or Random Survival Forest) on a given dataset. It performs
   # the following:
@@ -649,7 +677,7 @@ calculate_time_auc_cindex <- function(model_type = c("Cox", "RSF"), fitted_model
   # Calculates the concordance index (C-index).
   
   # Inputs:
-  #   model_type: "Cox" or "RSF".
+  # model_type: "Cox" or "RSF".
   # fitted_model: the trained model object.
   # df: dataset for evaluation.
   # Outputs:
@@ -728,22 +756,21 @@ calculate_time_auc_cindex <- function(model_type = c("Cox", "RSF"), fitted_model
   invisible(list(auc_df = auc_df, iAUC = iAUC, c_index = c_index))
 }
 
-
 run_bootstrap_iteration_1_model <- function(predictors_filtered,
-                                    df,
-                                    b,
-                                    coef_max,
-                                    min_concord, 
-                                    clinical_cleaned_risk_test,
-                                    selected_gene_df,
-                                    perf_list,
-                                    rsf_predictor_list,
-                                    best_perf,
-                                    best_model,
-                                    best_iter,
-                                    best_seed,
-                                    best_method,
-                                    current_seed) {
+                                            df,
+                                            b,
+                                            coef_max,
+                                            min_concord, 
+                                            clinical_cleaned_risk_test,
+                                            selected_gene_df,
+                                            perf_list,
+                                            rsf_predictor_list,
+                                            best_perf,
+                                            best_model,
+                                            best_iter,
+                                            best_seed,
+                                            best_method,
+                                            current_seed) {
   
   # This function performs one iteration of a bootstrap sampling and model comparison process. 
   # Its main purpose is to:   
@@ -889,7 +916,8 @@ run_bootstrap_iteration_1_model <- function(predictors_filtered,
   ))
 }
 
-run_bootstrap_validation_3_model <- function(expr_mat, clinical_df, 
+run_bootstrap_validation_3_model <- function(expr_mat,
+                                             clinical_df, 
                                              B = 10, 
                                              seed = 90000,
                                              min_epv = 2.5, 
@@ -1426,7 +1454,10 @@ train_cox_with_pca <- function(data = merged_df,
 }
 
 # Function to evaluate Cox model with PCA over multiple runs
-bootstrap_train_cox_with_pca <- function(data, clinical_df, n_runs, seed) {
+bootstrap_train_cox_with_pca <- function(data,
+                                         clinical_df,
+                                         n_runs,
+                                         seed) {
   
   # Initialize vectors to store performance metrics
   c_index_results <- numeric(n_runs)
@@ -1534,14 +1565,9 @@ bootstrap_train_cox_with_pca <- function(data, clinical_df, n_runs, seed) {
   ))
 }
 
-# pca_result_9_18_2 <- bootstrap_train_cox_with_pca(data = merged_df,
-#                                            clinical_df = clinical_cleaned_7390,
-#                                            n_runs = 100,
-#                                            seed = 12395 )
-
-#saveRDS(pca_result_9_18_2, "PCA_COX_result_model-inclusive_9_18_2.rds")
-
-calculate_coxme_predictions <- function(cox_me_model, test_df) {
+#tried to analysize the random effect of hospital but did not report it in the project.
+calculate_coxme_predictions <- function(cox_me_model,
+                                        test_df) {
   # Extract fixed effects coefficients
   fixed_coef <- fixef(cox_me_model)
   
@@ -1554,7 +1580,10 @@ calculate_coxme_predictions <- function(cox_me_model, test_df) {
   return(as.numeric(linear_predictor))
 }
 
-evaluate_coxme_cindex <- function(cox_me_model, test_df, time_var, status_var) {
+evaluate_coxme_cindex <- function(cox_me_model,
+                                  test_df,
+                                  time_var,
+                                  status_var) {
   
   predictions <- calculate_coxme_predictions(cox_me_model, test_df)
   
@@ -1562,9 +1591,8 @@ evaluate_coxme_cindex <- function(cox_me_model, test_df, time_var, status_var) {
   return(cindex)
 }
 
-#coxme_cindex <- evaluate_coxme_cindex(cox_me_model, test_df, time_var = "t_dmfs", status_var = "e_dmfs")
-
-predict_pca_cox <- function(new_pat, pca_cox_result) {
+predict_pca_cox <- function(new_pat,
+                            pca_cox_result) {
   # @description 
   # This function takes new patient data and a trained PCA-COX model to predict
   # survival outcomes.
@@ -1626,12 +1654,13 @@ predict_pca_cox <- function(new_pat, pca_cox_result) {
   return(predictions)
 }
 
-
 sanitize_latex <- function(x) {
   gsub("([%$&#_{}~^\\\\])", "\\\\\\1", x, perl = TRUE)
 }
 
-kable_table_func <- function(df, title, digit = 4){
+kable_table_func <- function(df,
+                             title,
+                             digit = 4){
   # convert a table into a kable function
   title <- sanitize_latex(title)
   kable(df,
