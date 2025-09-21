@@ -18,3 +18,4 @@ with replacement, none of the models achieved strong performance on the test set
 PCA-based Cox model modestly outperformed the others (mean iAUC = 0.57; mean C-index = 0.56). The
 single best PCA–Cox model—identified on one train/test split by the highest score-was retained as the final
 model for future prediction.
+The Random Survival Forest model, PCA-based COX PH model, and VAE-based COX PH model cannot be uploaded due to their large size.
